@@ -1,6 +1,7 @@
-use std::{any, fmt::Debug, ops::Deref, rc::Rc};
+use ::core::{any, fmt::Debug, ops::Deref};
+use ::std::rc::Rc;
 
-use crate::Directive;
+use crate::line_view::Directive;
 
 pub trait DirectiveMapper {
     fn map<'l>(&self, line: Directive<'l>, depth: usize) -> Directive<'l>;
@@ -113,7 +114,7 @@ impl AsRef<dyn DirectiveMapper + 'static> for DirectiveMapperChain {
 }
 
 impl Debug for DirectiveMapperChain {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("LineMapNode")
             .field("line_map", &self.name())
             .field("prev", &self.prev())

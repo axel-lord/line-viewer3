@@ -1,6 +1,7 @@
-use std::{fmt::Display, sync::Arc};
+use ::std::{sync::Arc};
+use ::core::fmt::Display;
 
-use crate::{cmd, Cmd, Result};
+use crate::line_view::{cmd, Cmd, Result};
 
 #[derive(Debug, Clone, Copy, Default)]
 enum Kind {
@@ -16,7 +17,7 @@ pub enum Source {
 }
 
 impl Display for Source {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
             Source::File(src) => write!(f, "FILE:{}", src),
         }
@@ -146,11 +147,11 @@ pub struct Line<C> {
 }
 
 impl<C> Line<C> {
-    pub fn source(&self) -> &Source {
+    pub const fn source(&self) -> &Source {
         &self.source
     }
 
-    pub fn line(&self) -> usize {
+    pub const fn line(&self) -> usize {
         self.position
     }
 
@@ -158,11 +159,11 @@ impl<C> Line<C> {
         &self.text
     }
 
-    pub fn is_title(&self) -> bool {
+    pub const fn is_title(&self) -> bool {
         matches!(self.kind, Kind::Title)
     }
 
-    pub fn is_warning(&self) -> bool {
+    pub const fn is_warning(&self) -> bool {
         matches!(self.kind, Kind::Warning)
     }
 }

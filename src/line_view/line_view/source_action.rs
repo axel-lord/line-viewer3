@@ -1,13 +1,14 @@
-use std::{borrow::Cow, cell::RefCell, path::PathBuf, sync::Arc};
+use ::core::cell::RefCell;
+use ::std::{borrow::Cow, path::PathBuf, sync::Arc};
 
-use crate::{
-    cmd,
+use crate::line_view::{
+    Cmd, Directive, PathSet, Result, cmd,
     line_view::{
+        Source,
         directive_source::DirectiveSource,
         line::{self, Line},
-        Source,
     },
-    provide, Cmd, Directive, PathSet, Result,
+    provide,
 };
 
 use super::{
@@ -41,7 +42,7 @@ impl DirectiveMapper for Then {
                             .iter()
                             .map(|warning| Directive::Warning(warning.clone().into())),
                     )
-                    .chain(std::iter::once(Directive::Else))
+                    .chain(core::iter::once(Directive::Else))
                     .collect(),
             ),
 
@@ -111,7 +112,7 @@ impl DirectiveMapper for Else {
 }
 
 fn directive_debug(line: Directive<'_>) -> Directive<'_> {
-    eprintln!("{line:#?}");
+    ::log::error!("{line:#?}");
     line
 }
 
@@ -182,10 +183,10 @@ impl SourceAction {
         let shallow = source.shallow();
         let Source {
             read,
-            ref path,
+            path,
             cmd,
             line_map,
-            ref warning_watcher,
+            warning_watcher,
             ..
         } = source;
 
@@ -235,7 +236,7 @@ impl SourceAction {
             }
             Directive::Then => {
                 if let Watch::Watching { occured } =
-                    std::mem::take(&mut *warning_watcher.borrow_mut())
+                    core::mem::take(&mut *warning_watcher.borrow_mut())
                 {
                     let prev = line_map.take();
                     *line_map = Some(DirectiveMapperChain::new(Then::from(occured), prev, false));
@@ -248,7 +249,7 @@ impl SourceAction {
             }
             Directive::Else => {
                 if let Watch::Watching { occured } =
-                    std::mem::take(&mut *warning_watcher.borrow_mut())
+                    core::mem::take(&mut *warning_watcher.borrow_mut())
                 {
                     let prev = line_map.take();
                     *line_map = Some(DirectiveMapperChain::new(Else::from(occured), prev, false));

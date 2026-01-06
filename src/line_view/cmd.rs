@@ -1,6 +1,6 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use crate::{line_view::line::Source as LineSource, Error, Result};
+use crate::line_view::{line_view::line::Source as LineSource, Error, Result};
 
 #[derive(Debug, Clone, Default)]
 pub struct Cmd {
@@ -19,7 +19,7 @@ impl Cmd {
         self
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.exe.is_none()
     }
 
@@ -38,7 +38,7 @@ impl Cmd {
             .chain(params.into_iter().map(|param| param.into()))
             .collect::<Vec<String>>();
 
-        std::process::Command::new(exe)
+        ::std::process::Command::new(exe)
             .env("LINE_VIEW_LINE_NR", line_nr.to_string())
             .env("LINE_VIEW_LINE_SRC", line_src.to_string())
             .args(&args)
@@ -61,7 +61,7 @@ pub struct Directory<T> {
 }
 
 impl Directory<Cmd> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             contents: Vec::new(),
         }
@@ -112,7 +112,7 @@ impl<T> Directory<T> {
     }
 }
 
-impl<T> std::ops::Index<Handle> for Directory<T> {
+impl<T> ::core::ops::Index<Handle> for Directory<T> {
     type Output = T;
 
     fn index(&self, index: Handle) -> &Self::Output {
@@ -120,7 +120,7 @@ impl<T> std::ops::Index<Handle> for Directory<T> {
     }
 }
 
-impl<T> std::ops::IndexMut<Handle> for Directory<T> {
+impl<T> ::core::ops::IndexMut<Handle> for Directory<T> {
     fn index_mut(&mut self, index: Handle) -> &mut Self::Output {
         self.get_mut(index).unwrap()
     }

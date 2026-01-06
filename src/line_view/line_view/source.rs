@@ -1,6 +1,6 @@
-use std::{
+use ::core::cell::RefCell;
+use ::std::{
     borrow::Cow,
-    cell::RefCell,
     io::BufReader,
     path::Path,
     rc::Rc,
@@ -9,19 +9,19 @@ use std::{
 
 use tap::Pipe;
 
-use crate::{
-    cmd, escape_path,
+use crate::line_view::{
+    Directive, PathSet, Result, cmd, escape_path,
     line_view::{
+        Cmd,
         directive_reader::DirectiveReader,
         directive_source::{DirectiveSource, DirectiveStream},
         line_map::DirectiveMapperChain,
-        Cmd,
     },
     path_ext::PathExt as _,
-    provide, Directive, PathSet, Result,
+    provide,
 };
 
-type ParseResult<T> = std::result::Result<T, Cow<'static, str>>;
+type ParseResult<T> = core::result::Result<T, Cow<'static, str>>;
 
 #[derive(Debug, Default)]
 pub enum Watch {
@@ -45,10 +45,10 @@ impl Watch {
             *self = Self::Sleeping
         }
     }
-    pub fn is_sleeping(&self) -> bool {
+    pub const fn is_sleeping(&self) -> bool {
         matches!(self, Watch::Sleeping)
     }
-    pub fn is_watching(&self) -> bool {
+    pub const fn is_watching(&self) -> bool {
         matches!(self, Watch::Watching { .. })
     }
 }

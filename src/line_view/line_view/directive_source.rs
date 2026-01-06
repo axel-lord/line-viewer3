@@ -1,6 +1,6 @@
-use std::fmt::Debug;
+use ::core::fmt::Debug;
 
-use crate::{Directive, Result};
+use crate::line_view::{Directive, Result};
 
 pub trait DirectiveSource: Debug {
     fn read(&mut self) -> Result<(usize, Directive<'_>)>;
@@ -51,7 +51,7 @@ struct Inner<LR: ?Sized> {
 }
 
 impl<T: ?Sized> Debug for Inner<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         write!(f, "{}", (self.debug)())
     }
 }
@@ -68,7 +68,7 @@ impl DirectiveStream {
         let line_read = Fused::from(line_read);
         let this = Box::new(Inner {
             stack: Vec::new(),
-            debug: || std::any::type_name::<LR>(),
+            debug: || ::core::any::type_name::<LR>(),
             line_read,
         });
 
@@ -82,7 +82,7 @@ impl DirectiveStream {
 }
 
 impl Debug for DirectiveStream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DynLineRead")
             .field("line_read", &self.this)
             .finish_non_exhaustive()

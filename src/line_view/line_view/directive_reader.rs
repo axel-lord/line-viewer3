@@ -1,7 +1,8 @@
-use std::{fmt::Debug, io::BufRead};
+use ::std::{io::BufRead};
+use ::core::fmt::Debug;
 
-use crate::line_view::directive_source::DirectiveSource;
-use crate::{Directive, Result};
+use crate::line_view::line_view::directive_source::DirectiveSource;
+use crate::line_view::{Directive, Result};
 
 #[derive(Debug)]
 pub struct DirectiveReader<R>(R, usize, String);
@@ -10,7 +11,7 @@ impl<R> DirectiveReader<R>
 where
     R: BufRead,
 {
-    pub fn new(read: R) -> Self {
+    pub const fn new(read: R) -> Self {
         Self(read, 0, String::new())
     }
 }

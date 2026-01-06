@@ -15,7 +15,7 @@ fn main() -> ::color_eyre::Result<()> {
         Action::Completions(completions) => completions.generate(),
         Action::MimeType(mime_type) => mime_type.write(),
         Action::Application(application) => application.generate(),
-        Action::Open(open) => Ok(()),
-        Action::Print(print) => Ok(()),
+        Action::Open(_open) => Ok(()),
+        Action::Print(_print) => Ok(()),
     }
 }

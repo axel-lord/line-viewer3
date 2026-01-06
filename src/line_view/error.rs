@@ -1,14 +1,14 @@
-use std::fmt::Display;
+use ::core::fmt::Display;
 
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(#[from] ::std::io::Error),
     #[error("failed to spawn {} with args |{}|, {}", program, ArgProxy(args), err)]
     Spawn {
-        err: std::io::Error,
+        err: ::std::io::Error,
         program: String,
         args: Vec<String>,
     },
@@ -17,7 +17,7 @@ pub enum Error {
 struct ArgProxy<'a>(&'a Vec<String>);
 
 impl Display for ArgProxy<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         let mut i = self.0.iter();
 
         if let Some(arg) = i.next() {

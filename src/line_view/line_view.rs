@@ -6,14 +6,15 @@ pub(crate) mod line;
 pub(crate) mod line_map;
 pub(crate) mod source;
 
-use std::sync::Arc;
+use ::std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::{
+use crate::line_view::{
+    Result,
     cmd::{self, Cmd},
     line_view::{line::Line, source::Source},
-    provide, Result,
+    provide,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -50,7 +51,7 @@ impl LineView {
             )? {
                 source_action::SourceAction::Noop => {}
                 source_action::SourceAction::Pop => {
-                    dbg!(sources.pop());
+                    sources.pop();
                 }
                 source_action::SourceAction::Push(source) => sources.push(source),
             }
@@ -90,11 +91,11 @@ impl AsRef<LineView> for LineView {
     }
 }
 
-impl<I> std::ops::Index<I> for LineView
+impl<I> ::core::ops::Index<I> for LineView
 where
-    Vec<Line<Arc<Cmd>>>: std::ops::Index<I>,
+    Vec<Line<Arc<Cmd>>>: ::core::ops::Index<I>,
 {
-    type Output = <Vec<Line<Arc<Cmd>>> as std::ops::Index<I>>::Output;
+    type Output = <Vec<Line<Arc<Cmd>>> as ::core::ops::Index<I>>::Output;
 
     fn index(&self, index: I) -> &Self::Output {
         &self.lines[index]

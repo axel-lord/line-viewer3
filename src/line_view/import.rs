@@ -1,12 +1,12 @@
-use std::{
+use ::std::{
     borrow::Cow,
     sync::{Arc, RwLock},
 };
 
-use crate::{
-    cmd,
+use crate::line_view::{
+    Cmd, Directive, PathSet, cmd,
     line_view::{line_map::DirectiveMapperChain, source::Source},
-    provide, Cmd, Directive, PathSet,
+    provide,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl<'line> Import<'line> {
         imported: &mut PathSet,
         cmd_directory: &mut cmd::Directory<Cmd>,
         provider: impl provide::Read,
-    ) -> std::result::Result<Source, Directive<'static>> {
+    ) -> ::core::result::Result<Source, Directive<'static>> {
         let Self { file, kind } = self;
         match kind {
             ImportKind::Source => source(
@@ -76,7 +76,7 @@ fn import(
     let source = match Source::parse(line, &dir, cmd_directory, provider) {
         Ok(source) => source,
         Err(err) => {
-            eprintln!("{err}");
+            ::log::error!("\n{err}");
             return None;
         }
     };
@@ -113,7 +113,7 @@ fn source(
             warning_watcher: source.warning_watcher,
         },
         Err(err) => {
-            eprintln!("{err}");
+            ::log::error!("\n{err}");
             return None;
         }
     };
@@ -158,7 +158,7 @@ fn lines(
             warning_watcher: source.warning_watcher,
         }),
         Err(err) => {
-            eprintln!("{err}");
+            ::log::error!("\n{err}");
             None
         }
     }
