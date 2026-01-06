@@ -22,7 +22,7 @@ fn main() -> ::color_eyre::Result<()> {
     };
     ::color_eyre::install()?;
     ::env_logger::builder()
-        .filter_level(LevelFilter::Info)
+        .filter_module("line_viewer3", LevelFilter::Info)
         .init();
 
     match Action::from(cli) {

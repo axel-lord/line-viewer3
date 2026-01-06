@@ -47,9 +47,12 @@ color-eyre = "0.6.5"
 derive_more = { version = "2.1.1", features = ["deref", "deref_mut", "from", "into"] }
 either = "1.15.0"
 env_logger = "0.11.8"
+flume = { version = "0.12.0", features = ["async"] }
 futures = "0.3.31"
 hashbrown = "0.16.1"
 iced = { version = "0.14.0", default-features = false, features = ["crisp", "smol"] }
+iceoryx2 = "0.8.0"
+iceoryx2-bb-container = "0.8.0"
 katalog-lib = { git = "https://github.com/axel-lord/katalog-lib" }
 log = "0.4.29"
 mimalloc = "0.1.48"
