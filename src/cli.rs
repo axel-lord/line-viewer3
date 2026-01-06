@@ -7,7 +7,7 @@ use ::std::{
 };
 
 use ::clap::{Args, CommandFactory, Parser, Subcommand};
-use ::clap_complete::{Generator, Shell};
+use ::clap_complete::Shell;
 use ::color_eyre::eyre::eyre;
 use ::katalog_lib::ThemeValueEnum;
 use ::patharg::{InputArg, OutputArg};
@@ -140,12 +140,19 @@ impl Completions {
     /// If the completions cannot be written or generated.
     pub fn generate(self) -> ::color_eyre::Result<()> {
         let Self { shell, file } = self;
-        shell
-            .try_generate(
-                &Cli::command(),
-                &mut file.create().map_err(|err| eyre!(err))?,
-            )
-            .map_err(|err| eyre!(err))
+        ::clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            current_exe()
+                .ok()
+                .and_then(|path| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| String::from(env!("CARGO_PKG_NAME"))),
+            &mut file.create().map_err(|err| eyre!(err))?,
+        );
+        Ok(())
     }
 }
 
