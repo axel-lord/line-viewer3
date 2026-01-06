@@ -6,14 +6,16 @@ use ::std::{
     path::PathBuf,
 };
 
-use ::clap::{Args, CommandFactory, Parser, Subcommand};
+use ::clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use ::clap_complete::Shell;
 use ::color_eyre::eyre::eyre;
-use ::derive_more::From;
+use ::derive_more::{From, IsVariant};
 use ::katalog_lib::ThemeValueEnum;
 use ::patharg::{InputArg, OutputArg};
 
 use crate::line_view::{self, LineView};
+
+pub use Feature::{Disabled, Enabled};
 
 /// Get default shell to use.
 fn default_shell() -> Shell {
@@ -41,6 +43,17 @@ impl From<Cli> for Action {
     fn from(value: Cli) -> Self {
         value.command.unwrap_or_default()
     }
+}
+
+/// Flag for an application feature.
+#[derive(Debug, Clone, Copy, IsVariant, PartialEq, Eq, PartialOrd, Ord, Hash, ValueEnum)]
+pub enum Feature {
+    /// Feature is enabled.
+    #[value(alias = "enable")]
+    Enabled,
+    /// Feature is disabled.
+    #[value(alias = "disable")]
+    Disabled,
 }
 
 /// What action to take.
@@ -237,7 +250,7 @@ impl Print {
 }
 
 /// Open line-viewer file.
-#[derive(Debug, Clone, Parser, Default)]
+#[derive(Debug, Clone, Parser)]
 #[command(author, version)]
 pub struct Open {
     /// Theme to use for application.
@@ -248,6 +261,21 @@ pub struct Open {
     #[arg(long)]
     pub home: Option<PathBuf>,
 
+    /// Should ipc be used.
+    #[arg(long, value_enum, default_value_t = Enabled)]
+    pub ipc: Feature,
+
     /// File to open.
     pub file: Option<PathBuf>,
+}
+
+impl Default for Open {
+    fn default() -> Self {
+        Self {
+            theme: Default::default(),
+            home: None,
+            ipc: Enabled,
+            file: None,
+        }
+    }
 }

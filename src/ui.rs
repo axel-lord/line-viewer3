@@ -1,6 +1,10 @@
 //! Ui implementation.
 
-use ::core::{fmt::Debug, ops::Deref, time::Duration};
+use ::core::{
+    fmt::Debug,
+    ops::{ControlFlow, Deref},
+    time::Duration,
+};
 use ::std::{
     collections::BTreeMap,
     ffi::OsStr,
@@ -12,6 +16,7 @@ use ::std::{
 use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
+use ::flume::Sender;
 use ::iced::{
     Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
 };
@@ -108,13 +113,12 @@ pub struct OpenRequest {
     themeidx: usize,
 }
 
-/// Run application ui.
-///
-/// # Errors
-/// If ui cannot be created.
-pub fn run(open: Open) -> ::color_eyre::Result<()> {
-    let Open { theme, home, file } = open;
-
+fn ipc_setup(
+    tx: Sender<Message>,
+    file: Option<&Path>,
+    home: Option<&Path>,
+    theme: ThemeValueEnum,
+) -> ::color_eyre::Result<ControlFlow<()>> {
     let node = NodeBuilder::new()
         .name(&"line_viewer".try_into()?)
         .create::<ipc_threadsafe::Service>()?;
@@ -135,7 +139,7 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
         Ok(subscriber) => subscriber,
         Err(SubscriberCreateError::ExceedsMaxSupportedSubscribers) => {
             let (path, open_at) = if let Some(path) = file {
-                (path, false)
+                (path.to_path_buf(), false)
             } else {
                 (::std::env::current_dir().map_err(|err| eyre!(err))?, true)
             };
@@ -150,7 +154,7 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
             let message = message.write_payload(OpenRequest {
                 open_at,
                 path: path.as_path().try_into()?,
-                home: home.map(|home| home.as_path().try_into()).transpose()?,
+                home: home.map(|home| home.try_into()).transpose()?,
                 themeidx: ThemeValueEnum::value_variants()
                     .iter()
                     .position(|variant| variant == &theme)
@@ -160,12 +164,10 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
             notifier.notify()?;
             ::log::info!("sent ipc message");
             node.wait(Duration::from_millis(50))?;
-            return Ok(());
+            return Ok(ControlFlow::Break(()));
         }
         Err(err) => return Err(eyre!(err)),
     };
-
-    let (tx, rx) = ::flume::bounded::<Message>(16);
 
     ::std::thread::Builder::new()
         .name("line-viewer-ipc".to_owned())
@@ -202,6 +204,27 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
 
             ::log::info!("closing ipc thread");
         })?;
+
+    Ok(ControlFlow::Continue(()))
+}
+
+/// Run application ui.
+///
+/// # Errors
+/// If ui cannot be created.
+pub fn run(open: Open) -> ::color_eyre::Result<()> {
+    let Open {
+        theme,
+        home,
+        file,
+        ipc,
+    } = open;
+
+    let (tx, rx) = ::flume::bounded::<Message>(16);
+
+    if ipc.is_enabled() && ipc_setup(tx, file.as_deref(), home.as_deref(), theme)?.is_break() {
+        return Ok(());
+    }
 
     let home = home.or_else(::std::env::home_dir);
     let cwd = ::std::env::current_dir()?;
