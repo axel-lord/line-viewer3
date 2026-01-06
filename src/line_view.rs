@@ -16,7 +16,7 @@ fn escape_path(line: &str) -> std::result::Result<std::path::PathBuf, &'static s
     Ok(match line.strip_prefix(HOME_PREFIX) {
         Some(line) if line.starts_with(HOME_PREFIX) => std::path::PathBuf::from(line),
         Some(line) => {
-            let Some(home_dir) = home::home_dir() else {
+            let Some(home_dir) = ::std::env::home_dir() else {
                 return Err("could not find user home");
             };
             home_dir.join(line)
