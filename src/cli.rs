@@ -238,6 +238,5 @@ pub struct Open {
     pub home: Option<PathBuf>,
 
     /// File to open.
-    #[arg(default_value_t)]
-    pub file: InputArg,
+    pub file: PathBuf,
 }

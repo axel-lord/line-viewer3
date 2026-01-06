@@ -1,6 +1,6 @@
 //! Ui implementation.
 
-use ::std::{collections::BTreeMap, io::stdin, sync::Arc};
+use ::std::{collections::BTreeMap, sync::Arc};
 
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
@@ -21,46 +21,29 @@ use crate::{
 pub fn run(open: Open) -> ::color_eyre::Result<()> {
     let Open { theme, home, file } = open;
     let home = home.or_else(::std::env::home_dir);
-    let file = match &file {
-        ::patharg::InputArg::Stdin => None,
-        ::patharg::InputArg::Path(path_buf) => Some(
-            path_buf
-                .to_str()
-                .ok_or_else(|| eyre!("path {file:?} is not valid utf-8"))?
-                .to_owned(),
-        ),
-    };
+    let file = file
+        .to_str()
+        .ok_or_else(|| eyre!("path {file:?} is not valid utf-8"))?
+        .to_owned();
 
     ::iced::daemon(
         move || {
             let home = home.clone();
             let file = file.clone();
             let task = Task::future(::smol::unblock(move || {
-                let title;
-                let line_view;
-                match file {
-                    None => {
-                        title = "Line Viewer: Stdin".to_owned();
-                        line_view = LineView::read_buf(
-                            stdin().lock(),
-                            line_view::provide::PathReadProvider,
-                            home.as_deref(),
-                        );
-                    }
-                    Some(path) => {
-                        title = format!("Line Viewer: {path}");
-                        line_view = LineView::read_path(
-                            path.into(),
-                            line_view::provide::PathReadProvider,
-                            home.as_deref(),
-                        );
-                    }
-                };
+                let title = format!("Line Viewer: {file}");
+                let theme = theme.into_inner();
+                let content = LineView::read_path(
+                    file.into(),
+                    line_view::provide::PathReadProvider,
+                    home.as_deref(),
+                )
+                .map_err(|err| err.to_string());
 
                 Arc::new(Window {
                     title,
-                    theme: theme.into_inner(),
-                    content: line_view.map_err(|err| err.to_string()),
+                    theme,
+                    content,
                 })
             }))
             .then(|window| {
