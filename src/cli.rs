@@ -9,6 +9,7 @@ use ::std::{
 use ::clap::{Args, CommandFactory, Parser, Subcommand};
 use ::clap_complete::Shell;
 use ::color_eyre::eyre::eyre;
+use ::derive_more::From;
 use ::katalog_lib::ThemeValueEnum;
 use ::patharg::{InputArg, OutputArg};
 
@@ -23,17 +24,27 @@ fn default_shell() -> Shell {
 #[derive(Debug, Parser, Clone)]
 #[command(author, version, args_conflicts_with_subcommands = true)]
 pub struct Cli {
-    /// If no else run open.
-    #[command(flatten)]
-    open: Open,
-
     /// What action to take.
     #[command(subcommand)]
-    command: Option<Action>,
+    pub command: Option<Action>,
+}
+
+impl From<Action> for Cli {
+    fn from(value: Action) -> Self {
+        Self {
+            command: Some(value),
+        }
+    }
+}
+
+impl From<Cli> for Action {
+    fn from(value: Cli) -> Self {
+        value.command.unwrap_or_default()
+    }
 }
 
 /// What action to take.
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, Subcommand, From)]
 pub enum Action {
     /// Generate completions.
     Completions(Completions),
@@ -47,10 +58,9 @@ pub enum Action {
     Print(Print),
 }
 
-impl From<Cli> for Action {
-    fn from(value: Cli) -> Self {
-        let Cli { open, command } = value;
-        command.unwrap_or(Action::Open(open))
+impl Default for Action {
+    fn default() -> Self {
+        Self::Open(Open::default())
     }
 }
 
@@ -95,7 +105,7 @@ impl Application {
         let mut builder = Vec::<u8>::from(CONTENT);
         builder.extend_from_slice(b"Exec=");
         builder.extend_from_slice(&exec);
-        builder.push(b'\n');
+        builder.extend_from_slice(b" open %f\n");
 
         file.write(builder).map_err(|err| eyre!(err))
     }
@@ -226,8 +236,9 @@ impl Print {
     }
 }
 
-#[derive(Debug, Clone, Args)]
 /// Open line-viewer file.
+#[derive(Debug, Clone, Parser, Default)]
+#[command(author, version)]
 pub struct Open {
     /// Theme to use for application.
     #[arg(long, short, value_enum, default_value_t)]
@@ -238,5 +249,5 @@ pub struct Open {
     pub home: Option<PathBuf>,
 
     /// File to open.
-    pub file: PathBuf,
+    pub file: Option<PathBuf>,
 }

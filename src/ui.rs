@@ -21,6 +21,15 @@ use crate::{
 pub fn run(open: Open) -> ::color_eyre::Result<()> {
     let Open { theme, home, file } = open;
     let home = home.or_else(::std::env::home_dir);
+    let file = file.map_or_else(
+        || {
+            ::rfd::FileDialog::new()
+                .set_title("Open Line View File")
+                .pick_file()
+                .ok_or_else(|| eyre!("no file selected"))
+        },
+        Ok,
+    )?;
     let file = file
         .to_str()
         .ok_or_else(|| eyre!("path {file:?} is not valid utf-8"))?

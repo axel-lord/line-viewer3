@@ -1,14 +1,25 @@
 //! Application to view and execute commands using lines.
 
+use ::std::path::PathBuf;
+
 use ::clap::Parser;
 use ::line_viewer3::{
-    cli::{Action, Cli},
+    cli::{Action, Cli, Open},
     ui,
 };
 use ::log::LevelFilter;
+use ::tap::Conv;
 
 fn main() -> ::color_eyre::Result<()> {
-    let cli = Cli::parse();
+    let cli = if let Some(path) = ::std::env::args_os().next().map(PathBuf::from)
+        && let Some(name) = path.file_name()
+        && let Some(name) = name.to_str()
+        && name == "line-viewer"
+    {
+        Open::parse().conv::<Action>().conv::<Cli>()
+    } else {
+        Cli::parse()
+    };
     ::color_eyre::install()?;
     ::env_logger::builder()
         .filter_level(LevelFilter::Info)

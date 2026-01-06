@@ -44,7 +44,7 @@ unused_result_ok = "warn"
 clap = { version = "4.5.53", features = ["derive"] }
 clap_complete = "4.5.61"
 color-eyre = "0.6.5"
-derive_more = { version = "2.1.1", features = ["deref", "deref_mut"] }
+derive_more = { version = "2.1.1", features = ["deref", "deref_mut", "from", "into"] }
 either = "1.15.0"
 env_logger = "0.11.8"
 futures = "0.3.31"
@@ -54,6 +54,7 @@ katalog-lib = { git = "https://github.com/axel-lord/katalog-lib" }
 log = "0.4.29"
 mimalloc = "0.1.48"
 patharg = "0.4.1"
+rfd = { version = "0.16.0", default-features = false, features = ["gtk3"]}
 rustc-hash = "2.1.1"
 smol = "2.0.2"
 tap = "1.0.1"
