@@ -1747,6 +1747,8 @@ dependencies = [
  "clap",
  "clap_complete",
  "color-eyre",
+ "derive_more",
+ "either",
  "env_logger",
  "futures",
  "hashbrown 0.16.1",

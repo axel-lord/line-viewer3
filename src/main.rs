@@ -1,7 +1,10 @@
 //! Application to view and execute commands using lines.
 
 use ::clap::Parser;
-use ::line_viewer3::cli::{Action, Cli};
+use ::line_viewer3::{
+    cli::{Action, Cli},
+    ui,
+};
 use ::log::LevelFilter;
 
 fn main() -> ::color_eyre::Result<()> {
@@ -16,6 +19,6 @@ fn main() -> ::color_eyre::Result<()> {
         Action::MimeType(mime_type) => mime_type.write(),
         Action::Application(application) => application.generate(),
         Action::Print(print) => print.print(),
-        Action::Open(_open) => Ok(()),
+        Action::Open(open) => ui::run(open),
     }
 }

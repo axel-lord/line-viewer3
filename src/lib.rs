@@ -2,3 +2,4 @@
 
 pub mod cli;
 pub mod line_view;
+pub mod ui;

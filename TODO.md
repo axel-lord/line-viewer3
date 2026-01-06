@@ -1,7 +1,7 @@
 # Todo List
 
 ## Frontend
-- [ ] Fininsh ui reimplementation
+- [x] Fininsh ui reimplementation
 - [ ] Add file editor
 - [ ] Shared application using ipc
 - [ ] Daemon mode for ui

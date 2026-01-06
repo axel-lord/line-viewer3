@@ -44,6 +44,8 @@ unused_result_ok = "warn"
 clap = { version = "4.5.53", features = ["derive"] }
 clap_complete = "4.5.61"
 color-eyre = "0.6.5"
+derive_more = { version = "2.1.1", features = ["deref", "deref_mut"] }
+either = "1.15.0"
 env_logger = "0.11.8"
 futures = "0.3.31"
 hashbrown = "0.16.1"
