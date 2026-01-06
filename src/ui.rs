@@ -240,6 +240,7 @@ impl State {
         };
 
         widget::Column::new()
+            .height(Fill)
             .spacing(5)
             .push(
                 widget::text(line_view.title())
@@ -311,6 +312,7 @@ impl State {
                     .spacing(2)
                     .pipe(widget::scrollable)
                     .pipe(widget::container)
+                    .height(Fill)
                     .style(widget::container::bordered_box),
             )
             .pipe(widget::container)
