@@ -89,12 +89,14 @@ fn import(
         }
     };
 
-    // prevent cycles
-    if imported.contains(&source.path) {
-        return None;
-    }
+    if let Some(path) = &source.path {
+        // prevent cycles
+        if imported.contains(path) {
+            return None;
+        }
 
-    imported.insert(Arc::clone(&source.path));
+        imported.insert(Arc::clone(path));
+    }
 
     Some(source)
 }
@@ -129,12 +131,14 @@ fn source(
 
     let mut sourced = sourced.write().unwrap();
 
-    // skip if already sourced in this context
-    if sourced.contains(&source.path) {
-        return None;
-    }
+    if let Some(path) = &source.path {
+        // skip if already sourced in this context
+        if sourced.contains(path) {
+            return None;
+        }
 
-    sourced.insert(Arc::clone(&source.path));
+        sourced.insert(Arc::clone(path));
+    }
     Some(source)
 }
 

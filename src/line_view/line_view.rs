@@ -6,7 +6,12 @@ pub(crate) mod line;
 pub(crate) mod line_map;
 pub(crate) mod source;
 
-use ::std::{path::Path, sync::Arc};
+use ::core::fmt::Debug;
+use ::std::{
+    io::{BufRead, Cursor},
+    path::Path,
+    sync::Arc,
+};
 
 use rustc_hash::FxHashSet;
 
@@ -23,15 +28,35 @@ pub struct LineView {
     lines: Vec<Line<Arc<Cmd>>>,
 }
 
+/// Initial lines to construct line-view from.
+#[derive(Debug, Clone)]
+pub enum RootLines<R> {
+    /// Start with in-memory lines.
+    Buffer(R),
+    /// Start with lines read
+    Path(Arc<str>),
+}
+
 impl LineView {
-    pub fn read(
-        path: impl Into<Arc<str>>,
+    pub fn read_buf(
+        buffer: impl 'static + BufRead + Debug,
         read_provider: impl provide::Read,
         home: Option<&Path>,
     ) -> Result<Self> {
-        // clean path
-        let path = path.into();
-
+        Self::read_(RootLines::Buffer(buffer), read_provider, home)
+    }
+    pub fn read_path(
+        path: Arc<str>,
+        read_provider: impl provide::Read,
+        home: Option<&Path>,
+    ) -> Result<Self> {
+        Self::read_(RootLines::<Cursor<&[u8]>>::Path(path), read_provider, home)
+    }
+    fn read_(
+        root: RootLines<impl 'static + BufRead + Debug>,
+        read_provider: impl provide::Read,
+        home: Option<&Path>,
+    ) -> Result<Self> {
         // setup stack, and source set
         let mut sources = Vec::new();
         let mut imported = FxHashSet::default();
@@ -40,8 +65,20 @@ impl LineView {
         let mut title = None;
         let mut cmd_directory = cmd::Directory::new();
 
-        let root = Source::open(path.clone(), &mut cmd_directory, &read_provider)?;
-        imported.insert(Arc::clone(&root.path));
+        let root_path;
+        let root = match root {
+            RootLines::Buffer(r) => {
+                root_path = None;
+                Source::with_buf_read(r, &mut cmd_directory)?
+            }
+            RootLines::Path(path) => {
+                let root = Source::open(path.clone(), &mut cmd_directory, &read_provider)?;
+                root_path = Some(path.clone());
+                imported.insert(path);
+                root
+            }
+        };
+
         sources.push(root);
 
         while let Some(source) = sources.last_mut() {
@@ -62,7 +99,9 @@ impl LineView {
             }
         }
 
-        let title = title.unwrap_or_else(|| path.to_string());
+        let title = title.unwrap_or_else(|| {
+            root_path.map_or_else(|| "No Title".to_owned(), |path| path.to_string())
+        });
 
         let cmd_directory = cmd_directory.map_to_arc();
         let lines = lines

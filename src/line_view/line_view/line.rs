@@ -1,7 +1,7 @@
-use ::std::{sync::Arc};
 use ::core::fmt::Display;
+use ::std::sync::Arc;
 
-use crate::line_view::{cmd, Cmd, Result};
+use crate::line_view::{Cmd, Result, cmd};
 
 #[derive(Debug, Clone, Copy, Default)]
 enum Kind {
@@ -14,12 +14,14 @@ enum Kind {
 #[derive(Debug, Clone)]
 pub enum Source {
     File(Arc<str>),
+    Mem,
 }
 
 impl Display for Source {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
             Source::File(src) => write!(f, "FILE:{}", src),
+            Source::Mem => f.write_str("MEM"),
         }
     }
 }
@@ -33,6 +35,19 @@ impl From<Arc<str>> for Source {
 impl From<&Arc<str>> for Source {
     fn from(value: &Arc<str>) -> Self {
         Self::File(Arc::clone(value))
+    }
+}
+
+impl<S> From<Option<S>> for Source
+where
+    Source: From<S>,
+{
+    fn from(value: Option<S>) -> Self {
+        if let Some(value) = value {
+            Source::from(value)
+        } else {
+            Source::Mem
+        }
     }
 }
 

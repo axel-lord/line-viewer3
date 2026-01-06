@@ -122,7 +122,7 @@ fn directive_debug(line: Directive<'_>) -> Directive<'_> {
 
 struct Lines<'lines> {
     pub lines: &'lines mut Vec<Line<cmd::Handle>>,
-    pub path: &'lines Arc<str>,
+    pub path: Option<&'lines Arc<str>>,
     pub cmd: cmd::Handle,
     pub warning_watcher: &'lines RefCell<Watch>,
     pub position: usize,
@@ -197,6 +197,7 @@ impl SourceAction {
 
         // read line
         let (position, directive) = read.read()?;
+        let path = path.as_ref();
 
         // shared start of builder
         let mut lines = Lines {

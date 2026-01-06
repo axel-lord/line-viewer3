@@ -1,7 +1,7 @@
-use ::core::cell::RefCell;
+use ::core::{cell::RefCell, fmt::Debug};
 use ::std::{
     borrow::Cow,
-    io::BufReader,
+    io::{BufRead, BufReader},
     path::Path,
     rc::Rc,
     sync::{Arc, RwLock},
@@ -56,7 +56,7 @@ impl Watch {
 #[derive(Debug)]
 pub struct Source {
     pub read: DirectiveStream,
-    pub path: Arc<str>,
+    pub path: Option<Arc<str>>,
     pub cmd: cmd::Handle,
     pub sourced: Arc<RwLock<PathSet>>,
     pub dir: Arc<str>,
@@ -65,13 +65,18 @@ pub struct Source {
 }
 
 impl Source {
-    pub fn new(path: Arc<str>, cmd_directory: &mut cmd::Directory<Cmd>) -> Self {
+    pub fn new(path: Option<Arc<str>>, cmd_directory: &mut cmd::Directory<Cmd>) -> Self {
         Self {
             read: DirectiveStream::new(NullReader),
-            dir: {
+            dir: if let Some(path) = &path {
                 let mut dir = AsRef::<Path>::as_ref(path.as_ref()).to_path_buf();
                 dir.pop();
                 dir.to_string_lossy().into()
+            } else {
+                ::std::env::current_dir()
+                    .unwrap_or_else(|err| panic!("could not get current directory, {err}"))
+                    .to_string_lossy()
+                    .into()
             },
             path,
             sourced: Default::default(),
@@ -93,6 +98,18 @@ impl Source {
         }
     }
 
+    pub fn with_buf_read(
+        buf_reader: impl 'static + BufRead + Debug,
+        cmd_directory: &mut cmd::Directory<Cmd>,
+    ) -> Result<Self> {
+        Ok(Source {
+            read: buf_reader
+                .pipe(DirectiveReader::new)
+                .pipe(DirectiveStream::new),
+            ..Source::new(None, cmd_directory)
+        })
+    }
+
     pub fn open(
         path: Arc<str>,
         cmd_directory: &mut cmd::Directory<Cmd>,
@@ -104,7 +121,7 @@ impl Source {
                 .pipe(BufReader::new)
                 .pipe(DirectiveReader::new)
                 .pipe(DirectiveStream::new),
-            ..Source::new(path, cmd_directory)
+            ..Source::new(Some(path), cmd_directory)
         })
     }
 

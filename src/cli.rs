@@ -1,12 +1,18 @@
 //! [Cli] impl.
 
-use ::std::{env::current_exe, path::PathBuf};
+use ::std::{
+    env::current_exe,
+    io::{BufWriter, Write, stdin},
+    path::PathBuf,
+};
 
 use ::clap::{Args, CommandFactory, Parser, Subcommand};
 use ::clap_complete::{Generator, Shell};
 use ::color_eyre::eyre::eyre;
 use ::katalog_lib::ThemeValueEnum;
 use ::patharg::{InputArg, OutputArg};
+
+use crate::line_view::{self, LineView};
 
 /// Get default shell to use.
 fn default_shell() -> Shell {
@@ -157,6 +163,60 @@ pub struct Print {
     /// Where to print file.
     #[arg(default_value_t)]
     pub destination: OutputArg,
+}
+
+impl Print {
+    /// Print line view.
+    ///
+    /// # Errors
+    /// If the lines cannot be read/parsed.
+    /// Or if they cannot be written.
+    pub fn print(self) -> ::color_eyre::Result<()> {
+        let Self {
+            file,
+            home,
+            destination,
+        } = self;
+
+        let view = match file {
+            InputArg::Stdin => LineView::read_buf(
+                stdin().lock(),
+                line_view::provide::PathReadProvider,
+                home.as_deref(),
+            ),
+            InputArg::Path(path_buf) => LineView::read_path(
+                path_buf
+                    .to_str()
+                    .ok_or_else(|| eyre!("destination path {destination:?} is not valid utf-8"))?
+                    .into(),
+                line_view::provide::PathReadProvider,
+                home.as_deref(),
+            ),
+        };
+        let view = view.map_err(|err| eyre!(err))?;
+
+        let mut destination = destination
+            .create()
+            .map_err(|err| eyre!(err))?
+            .map_right(BufWriter::new);
+
+        for line in &view {
+            if line.is_title() {
+                destination.write_all(b"-- ").map_err(|err| eyre!(err))?;
+            }
+            if line.is_warning() {
+                destination
+                    .write_all(b"[warning] ")
+                    .map_err(|err| eyre!(err))?;
+            }
+            destination
+                .write_all(line.text().as_bytes())
+                .map_err(|err| eyre!(err))?;
+            destination.write_all(b"\n").map_err(|err| eyre!(err))?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Args)]

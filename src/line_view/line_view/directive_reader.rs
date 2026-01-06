@@ -1,5 +1,5 @@
-use ::std::{io::BufRead};
 use ::core::fmt::Debug;
+use ::std::io::BufRead;
 
 use crate::line_view::line_view::directive_source::DirectiveSource;
 use crate::line_view::{Directive, Result};
