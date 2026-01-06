@@ -1,0 +1,24 @@
+#-debug using debug means most of the ignored lines will be shown in stderr
+#-title Ignore
+# Comments are not used as lines
+#
+# Empty comments can be used to create space not reflected in output
+#-comment "comments may also be created as directives"
+#-ignore-warnings
+#-warning warnings are ignored in ignore-warnings blocks
+#-invalid-directive even natureal warnings such as invalid directives
+#-comment and missing imports
+#-end end directives stop blocks, any text on the same line after end (here) is ignored
+#
+#-ignore-text
+In ignore-text blocks any text is ignored
+meaning anything can be written
+#-text this applies to the text directive too
+#-end
+#-close
+Anything after close will be ignored, since the file is dropped
+upon reaching it it is not possible to read more, unless the
+close directive was somehow ignored
+#-source and of course this applies to directives too
+#
+#-end not needed since the file closes here but nice anyway

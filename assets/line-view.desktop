@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Version=0.1
+Name=Line Viewer
+Comment=Display text file content in lines
+MimeType=application/x-lineview

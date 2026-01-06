@@ -1,0 +1,58 @@
+[package]
+name = "line-viewer3"
+version = "3.0.0"
+edition = "2024"
+authors = ["Axel Lord"]
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["wgpu", "wayland"]
+tiny-skia = ["iced/tiny-skia"]
+wgpu = ["iced/wgpu"]
+wayland = ["iced/wayland"]
+x11 = ["iced/x11"]
+
+[profile.release]
+strip = "debuginfo"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[lints.rust]
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+allow_attributes = "warn"
+case_sensitive_file_extension_comparisons = "warn"
+dbg_macro = "warn"
+future_not_send = "warn"
+missing_const_for_fn = "warn"
+missing_docs_in_private_items = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+std_instead_of_core = "warn"
+str_to_string = "warn"
+todo = "warn"
+unused_result_ok = "warn"
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+clap_complete = "4.5.61"
+color-eyre = "0.6.5"
+env_logger = "0.11.8"
+futures = "0.3.31"
+hashbrown = "0.16.1"
+iced = { version = "0.14.0", default-features = false, features = ["crisp", "smol"] }
+katalog-lib = { git = "https://github.com/axel-lord/katalog-lib" }
+log = "0.4.29"
+mimalloc = "0.1.48"
+patharg = "0.4.1"
+rustc-hash = "2.1.1"
+smol = "2.0.2"
+tap = "1.0.1"
+thiserror = "2.0.17"

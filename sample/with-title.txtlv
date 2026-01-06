@@ -1,0 +1,4 @@
+#!/usr/bin/env line-viewer
+#-exe xdg-open
+#-title Links
+#-import lines.txtlv

@@ -1,0 +1,19 @@
+#-title Command Cleanup
+# By using clean multiple commands can be used in the
+# same file
+#-exe printf
+#-arg First: %s\n
+#-subtitle First
+#-lines lines.txtlv
+
+#-clean
+#-exe printf
+#-arg Second: %s\n
+#-subtitle Second
+#-lines lines.txtlv
+
+#-clean
+#-exe printf
+#-arg Third: %s\n
+#-subtitle Third
+#-lines lines.txtlv

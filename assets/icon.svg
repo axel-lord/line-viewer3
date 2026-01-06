@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="512"
+   height="512"
+   viewBox="0 0 512 512"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.1.2 (b8e25be833, 2022-02-05)"
+   sodipodi:docname="icon.svg"
+   inkscape:export-filename="C:\Projects\Programming\line-viewer\assets\icon.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:pageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="true"
+     inkscape:document-units="px"
+     showgrid="true"
+     inkscape:zoom="1.2029102"
+     inkscape:cx="330.44862"
+     inkscape:cy="251.05782"
+     inkscape:window-width="1680"
+     inkscape:window-height="1027"
+     inkscape:window-x="1912"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1">
+    <inkscape:grid
+       type="xygrid"
+       id="grid9"
+       dotted="false"
+       units="px"
+       spacingx="16"
+       spacingy="16" />
+  </sodipodi:namedview>
+  <defs
+     id="defs2" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:#ffffff;stroke-width:1.06666"
+       id="rect317"
+       width="512"
+       height="512"
+       x="-8.1712415e-14"
+       y="-8.1712415e-14" />
+    <rect
+       style="fill:#333333;stroke-width:0.982607"
+       id="rect407"
+       width="448"
+       height="448"
+       x="32"
+       y="32" />
+    <rect
+       style="fill:#ffffff;stroke-width:0.758787"
+       id="rect4846"
+       width="304"
+       height="32"
+       x="80"
+       y="80" />
+    <rect
+       style="fill:#ffffff;stroke-width:0.92932"
+       id="rect4848"
+       width="304"
+       height="32"
+       x="80"
+       y="400" />
+    <rect
+       style="fill:#ffffff;stroke-width:0.879049"
+       id="rect4957"
+       width="272"
+       height="32"
+       x="80"
+       y="160" />
+    <rect
+       style="fill:#ffffff;stroke-width:1"
+       id="rect4959"
+       width="352"
+       height="32"
+       x="80"
+       y="240" />
+    <rect
+       style="fill:#ffffff;stroke-width:0.603023"
+       id="rect4961"
+       width="128"
+       height="32"
+       x="80"
+       y="320" />
+  </g>
+</svg>

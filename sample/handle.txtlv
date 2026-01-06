@@ -1,0 +1,63 @@
+#-subtitle Then Else
+#-watch
+Warnings created here
+#-warning warning on line 2
+#-warning warning on line 3
+#-then
+This would be shown if everythin was ok
+#-else
+
+Warnings shown bellow
+#-display-warnings
+#-end
+
+#-subtitle Then
+#-watch
+This line is unproblematic
+#-then
+This line should be shown
+#-end
+
+#-subtitle Else
+#-watch
+#-warning unimportant
+#-else
+This line should be shown since there was a warning
+#-end
+
+#-subtitle Branch Else
+#-watch
+#-warning a warning
+#-then
+This line should not be shown
+#-else
+This line should be shown
+#-end
+
+#-subtitle Branch Then
+#-watch
+#-then
+This line should be shown
+#-else
+This line should not be shown
+#-end
+
+#-subtitle Nested
+#
+#-watch
+#-warning A warning
+#
+#-then
+This should not be shown
+#
+#-else
+#
+#-watch
+#-then
+This should be shown
+#
+#-else
+This should not be shown
+#-end
+#-end
+

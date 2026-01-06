@@ -1,0 +1,14 @@
+#-title Escapes
+## To have a line start with a # double it at the 
+## beginning, the first will be ignored
+directives are stripped at both ends, but if quotes are used this can beginning
+mitigated, if they only appear at one end they are parsed as normal
+#-warning      space around me is stripped     
+#-warning "       not around me     "
+#-warning "   as the qoute is only on one end it will be included
+#-warning          other end"
+#-warning ""if actual quotes are desired they can simply be doubled""
+#-close
+The close directive closes the current source
+meaning no further lines are read by the program
+#-warning not even directives

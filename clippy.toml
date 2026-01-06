@@ -1,0 +1,8 @@
+disallowed-types = [
+	{ path = "::std::collections::HashMap", replacement = "::hashbrown::HashMap" },
+	{ path = "::std::collections::HashSet", replacement = "::hashbrown::HashSet" },
+	{ path = "::rustc_hash::FxHashMap", replacement = "::hashbrown::HashMap" },
+	{ path = "::rustc_hash::FxHashSet", replacement = "::hashbrown::HashSet" },
+]
+disallowed-methods = [
+]

@@ -1,0 +1,25 @@
+#-title Warnings
+#
+warnings are shown when something goes wrong or a directive is not
+used correctly or does not exist
+#-invalid-command
+#-next-invalid command
+
+warnings can be issued manually
+#- warning this is a custom warning
+
+warnings require an argument, however the result of skipping
+it will still be a warning, saying it requires an argument
+so in practice they don't
+#-warning
+
+using end with nothing open leads to a warning
+#-end
+
+The ignore-warnings directive silences all warnings until an
+end block is reached
+#-ignore-warnings
+#-warning First warning
+#-warning Second warning
+#-natural-warning
+#-end
