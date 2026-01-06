@@ -2,7 +2,7 @@
     missing_docs,
     clippy::missing_docs_in_private_items,
     clippy::module_inception,
-    clippy::missing_errors_doc,
+    clippy::missing_errors_doc
 )]
 
 mod cmd;
@@ -14,16 +14,21 @@ mod path_ext;
 
 pub mod provide;
 
+use ::std::path::Path;
+
 pub use self::{cmd::Cmd, directive::Directive, error::Error, import::Import, line_view::LineView};
 
 type PathSet = rustc_hash::FxHashSet<std::sync::Arc<str>>;
-fn escape_path(line: &str) -> ::core::result::Result<std::path::PathBuf, &'static str> {
+fn escape_path(
+    line: &str,
+    home: Option<&Path>,
+) -> ::core::result::Result<std::path::PathBuf, &'static str> {
     const HOME_PREFIX: &str = "~/";
 
     Ok(match line.strip_prefix(HOME_PREFIX) {
         Some(line) if line.starts_with(HOME_PREFIX) => ::std::path::PathBuf::from(line),
         Some(line) => {
-            let Some(home_dir) = ::std::env::home_dir() else {
+            let Some(home_dir) = home else {
                 return Err("could not find user home");
             };
             home_dir.join(line)

@@ -1,5 +1,6 @@
 use ::std::{
     borrow::Cow,
+    path::Path,
     sync::{Arc, RwLock},
 };
 
@@ -48,6 +49,7 @@ impl<'line> Import<'line> {
         imported: &mut PathSet,
         cmd_directory: &mut cmd::Directory<Cmd>,
         provider: impl provide::Read,
+        home: Option<&Path>,
     ) -> ::core::result::Result<Source, Directive<'static>> {
         let Self { file, kind } = self;
         match kind {
@@ -58,9 +60,14 @@ impl<'line> Import<'line> {
                 parent.sourced,
                 cmd_directory,
                 provider,
+                home,
             ),
-            ImportKind::Import => import(&file, parent.dir, imported, cmd_directory, provider),
-            ImportKind::Lines => lines(&file, parent.dir, parent.cmd, cmd_directory, provider),
+            ImportKind::Import => {
+                import(&file, parent.dir, imported, cmd_directory, provider, home)
+            }
+            ImportKind::Lines => {
+                lines(&file, parent.dir, parent.cmd, cmd_directory, provider, home)
+            }
         }
         .ok_or_else(|| Directive::Warning(format!("could not source/import/lines {file}").into()))
     }
@@ -72,8 +79,9 @@ fn import(
     imported: &mut PathSet,
     cmd_directory: &mut cmd::Directory<Cmd>,
     provider: impl provide::Read,
+    home: Option<&Path>,
 ) -> Option<Source> {
-    let source = match Source::parse(line, &dir, cmd_directory, provider) {
+    let source = match Source::parse(line, &dir, cmd_directory, provider, home) {
         Ok(source) => source,
         Err(err) => {
             ::log::error!("\n{err}");
@@ -98,8 +106,9 @@ fn source(
     sourced: Arc<RwLock<PathSet>>,
     cmd_directory: &mut cmd::Directory<Cmd>,
     provider: impl provide::Read,
+    home: Option<&Path>,
 ) -> Option<Source> {
-    let source = match Source::parse(line, &dir, cmd_directory, provider) {
+    let source = match Source::parse(line, &dir, cmd_directory, provider, home) {
         Ok(source) => Source {
             // sources gain source context of parent, while imports get their own
             sourced: Arc::clone(&sourced),
@@ -142,9 +151,10 @@ fn lines(
     cmd: cmd::Handle,
     cmd_directory: &mut cmd::Directory<Cmd>,
     provider: impl provide::Read,
+    home: Option<&Path>,
 ) -> Option<Source> {
     // lines can be sourced however much is wanted since they cannot create cycles
-    match Source::parse(line, &dir, cmd_directory, provider) {
+    match Source::parse(line, &dir, cmd_directory, provider, home) {
         Ok(source) => Some(Source {
             // lines inherit command from parent
             cmd,

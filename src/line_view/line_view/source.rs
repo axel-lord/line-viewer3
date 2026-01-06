@@ -113,8 +113,9 @@ impl Source {
         dir: &str,
         cmd_directory: &mut cmd::Directory<Cmd>,
         provider: impl provide::Read,
+        home: Option<&Path>,
     ) -> ParseResult<Self> {
-        let line = escape_path(line)?;
+        let line = escape_path(line, home)?;
 
         let path = line.canonicalize_at(dir.as_ref()).map_err(|err| {
             Cow::Owned(format!(

@@ -6,7 +6,7 @@ pub(crate) mod line;
 pub(crate) mod line_map;
 pub(crate) mod source;
 
-use ::std::sync::Arc;
+use ::std::{path::Path, sync::Arc};
 
 use rustc_hash::FxHashSet;
 
@@ -24,7 +24,11 @@ pub struct LineView {
 }
 
 impl LineView {
-    pub fn read(path: impl Into<Arc<str>>, read_provider: impl provide::Read) -> Result<Self> {
+    pub fn read(
+        path: impl Into<Arc<str>>,
+        read_provider: impl provide::Read,
+        home: Option<&Path>,
+    ) -> Result<Self> {
         // clean path
         let path = path.into();
 
@@ -48,6 +52,7 @@ impl LineView {
                 &mut title,
                 &mut cmd_directory,
                 &read_provider,
+                home,
             )? {
                 source_action::SourceAction::Noop => {}
                 source_action::SourceAction::Pop => {

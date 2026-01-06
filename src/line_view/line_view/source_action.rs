@@ -1,5 +1,9 @@
 use ::core::cell::RefCell;
-use ::std::{borrow::Cow, path::PathBuf, sync::Arc};
+use ::std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::line_view::{
     Cmd, Directive, PathSet, Result, cmd,
@@ -179,6 +183,7 @@ impl SourceAction {
         title: &mut Option<String>,
         cmd_directory: &mut cmd::Directory<Cmd>,
         provider: impl provide::Read,
+        home: Option<&Path>,
     ) -> Result<SourceAction> {
         let shallow = source.shallow();
         let Source {
@@ -317,7 +322,13 @@ impl SourceAction {
                 lines.push_subtitle(text, cmd_directory);
             }
             Directive::Import(import) => {
-                match import.perform_import(shallow.shallow(), imported, cmd_directory, &provider) {
+                match import.perform_import(
+                    shallow.shallow(),
+                    imported,
+                    cmd_directory,
+                    &provider,
+                    home,
+                ) {
                     Ok(source) => {
                         return Ok(SourceAction::Push(source));
                     }
