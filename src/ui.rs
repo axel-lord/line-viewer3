@@ -497,10 +497,10 @@ impl State {
                                     .size(12)
                             }
                             .pipe(widget::button)
-                            .on_press_maybe((!line.text().is_empty()).then(|| Message::ExecLine {
-                                id,
-                                line: line.line(),
-                            }))
+                            .on_press_maybe(
+                                (!line.text().is_empty())
+                                    .then_some(Message::ExecLine { id, line: idx }),
+                            )
                             .padding(0)
                             .style(widget::button::text)
                             .pipe(widget::mouse_area)
