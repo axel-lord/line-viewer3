@@ -1,212 +1,21 @@
 //! Ui implementation.
 
-use ::core::{
-    fmt::Debug,
-    ops::{ControlFlow, Deref},
-    time::Duration,
-};
-use ::std::{
-    collections::BTreeMap,
-    ffi::OsStr,
-    os::unix::ffi::OsStrExt,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use ::core::{fmt::Debug, ops::ControlFlow};
+use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
-use ::flume::Sender;
 use ::iced::{
     Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
 };
-use ::iceoryx2::{
-    node::NodeBuilder,
-    port::subscriber::SubscriberCreateError,
-    prelude::{EventId, ZeroCopySend},
-    service::ipc_threadsafe,
-};
-use ::iceoryx2_bb_container::vector::StaticVec;
 use ::katalog_lib::ThemeValueEnum;
 use ::tap::Pipe;
 
 use crate::{
     cli::Open,
+    ipc::ipc_setup,
     line_view::{self, LineView},
 };
-
-/// A static path with a lenght of at most N.
-#[derive(Clone, ZeroCopySend)]
-#[repr(C)]
-struct StaticPath<const N: usize> {
-    /// Byte data of path.
-    data: StaticVec<u8, N>,
-}
-
-/// Error returned when trying to create StaticPath from a
-/// path that is too long.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ::thiserror::Error)]
-#[error("cannot create StaticPath<{at_most}> from a path of length{len}")]
-pub struct PathTooLong {
-    /// Longest length that would have been possible.
-    pub at_most: usize,
-    /// Length that was attempted.
-    pub len: usize,
-}
-
-impl<const N: usize> TryFrom<&Path> for StaticPath<N> {
-    type Error = PathTooLong;
-
-    fn try_from(value: &Path) -> Result<Self, Self::Error> {
-        let bytes = value.as_os_str().as_encoded_bytes();
-        StaticVec::try_from(bytes)
-            .map(|data| Self { data })
-            .map_err(|_| PathTooLong {
-                at_most: N,
-                len: bytes.len(),
-            })
-    }
-}
-
-impl<const N: usize> AsRef<OsStr> for StaticPath<N> {
-    #[inline]
-    fn as_ref(&self) -> &OsStr {
-        OsStr::from_bytes(&self.data)
-    }
-}
-
-impl<const N: usize> AsRef<Path> for StaticPath<N> {
-    #[inline]
-    fn as_ref(&self) -> &Path {
-        Path::new(AsRef::<OsStr>::as_ref(self))
-    }
-}
-
-impl<const N: usize> Deref for StaticPath<N> {
-    type Target = Path;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<const N: usize> Debug for StaticPath<N> {
-    #[inline]
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        Debug::fmt(AsRef::<Path>::as_ref(self), f)
-    }
-}
-
-/// Request a path be either opened or used ast the start
-/// of a file dialog.
-#[derive(Debug, Clone, ZeroCopySend)]
-#[repr(C)]
-pub struct OpenRequest {
-    /// If true a file dialog should be opened at location.
-    open_at: bool,
-    /// Path used for either opening or file dialog.
-    path: StaticPath<4096>,
-    /// Path used for home.
-    home: Option<StaticPath<4096>>,
-    /// Index of theme used.
-    themeidx: usize,
-}
-
-fn ipc_setup(
-    tx: Sender<Message>,
-    file: Option<&Path>,
-    home: Option<&Path>,
-    theme: ThemeValueEnum,
-) -> ::color_eyre::Result<ControlFlow<()>> {
-    let node = NodeBuilder::new()
-        .name(&"line_viewer".try_into()?)
-        .create::<ipc_threadsafe::Service>()?;
-
-    let service = node
-        .service_builder(&"open_path".try_into()?)
-        .publish_subscribe::<OpenRequest>()
-        .max_subscribers(1)
-        .open_or_create()?;
-
-    let ping_event = EventId::new(11);
-    let event_service = node
-        .service_builder(&"open_path".try_into()?)
-        .event()
-        .open_or_create()?;
-
-    let subscriber = match service.subscriber_builder().create() {
-        Ok(subscriber) => subscriber,
-        Err(SubscriberCreateError::ExceedsMaxSupportedSubscribers) => {
-            let (path, open_at) = if let Some(path) = file {
-                (path.to_path_buf(), false)
-            } else {
-                (::std::env::current_dir().map_err(|err| eyre!(err))?, true)
-            };
-
-            let publisher = service.publisher_builder().create()?;
-            let notifier = event_service
-                .notifier_builder()
-                .default_event_id(ping_event)
-                .create()?;
-
-            let message = publisher.loan_uninit()?;
-            let message = message.write_payload(OpenRequest {
-                open_at,
-                path: path.as_path().try_into()?,
-                home: home.map(|home| home.try_into()).transpose()?,
-                themeidx: ThemeValueEnum::value_variants()
-                    .iter()
-                    .position(|variant| variant == &theme)
-                    .unwrap_or(usize::MAX),
-            });
-            message.send()?;
-            notifier.notify()?;
-            ::log::info!("sent ipc message");
-            node.wait(Duration::from_millis(50))?;
-            return Ok(ControlFlow::Break(()));
-        }
-        Err(err) => return Err(eyre!(err)),
-    };
-
-    ::std::thread::Builder::new()
-        .name("line-viewer-ipc".to_owned())
-        .spawn(move || {
-            let receive_messages = move || -> ::color_eyre::Result<()> {
-                let listener = event_service.listener_builder().create()?;
-                while listener
-                    .timed_wait_all(|_| {}, Duration::from_millis(200))
-                    .is_ok()
-                {
-                    while let Some(message) = subscriber.receive()? {
-                        ::log::info!("received ipc message");
-                        let path = message.path.to_path_buf();
-                        let open_at = message.open_at;
-                        let home = message.home.as_ref().map(|home| home.to_path_buf());
-                        let theme = ThemeValueEnum::value_variants()
-                            .get(message.themeidx)
-                            .copied()
-                            .unwrap_or_default();
-
-                        tx.send(if open_at {
-                            Message::DialogAt { path, home, theme }
-                        } else {
-                            Message::OpenFile { path, home, theme }
-                        })?;
-                    }
-                }
-                Ok(())
-            };
-
-            if let Err(err) = receive_messages() {
-                ::log::error!("error receiving ipc messages\n{err}");
-            }
-
-            ::log::info!("closing ipc thread");
-        })?;
-
-    Ok(ControlFlow::Continue(()))
-}
 
 /// Run application ui.
 ///
@@ -222,8 +31,17 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
 
     let (tx, rx) = ::flume::bounded::<Message>(16);
 
-    if ipc.is_enabled() && ipc_setup(tx, file.as_deref(), home.as_deref(), theme)?.is_break() {
-        return Ok(());
+    if ipc.is_enabled() {
+        match ipc_setup(tx, file.as_deref(), home.as_deref(), theme) {
+            // On error we continue without ipc.
+            Err(err) => {
+                ::log::error!("ipc setup failed\n{err}");
+            }
+            // I we are the subscriber we continue.
+            Ok(ControlFlow::Continue(..)) => {}
+            // If the inputs were sent to another instance we return.
+            Ok(ControlFlow::Break(..)) => return Ok(()),
+        }
     }
 
     let home = home.or_else(::std::env::home_dir);
@@ -258,7 +76,7 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
 
 /// Ui message type.
 #[derive(Debug, Clone)]
-enum Message {
+pub enum Message {
     /// Add window to state.
     AddWindow {
         /// Id of window.
@@ -311,7 +129,7 @@ enum Message {
 
 /// Window state.
 #[derive(Debug)]
-struct Window {
+pub struct Window {
     /// Theme in use.
     theme: Theme,
     /// Window Title.
