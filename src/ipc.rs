@@ -1,15 +1,24 @@
 //! Interprocess communication for only having one ui with multiple windows.
 
-use ::core::{fmt::Debug, ops::ControlFlow, str::Utf8Error, time::Duration};
+use ::core::{
+    fmt::{Debug, Display},
+    ops::ControlFlow,
+    str::Utf8Error,
+    time::Duration,
+};
 use ::std::path::Path;
 
 use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::flume::Sender;
 use ::iceoryx2::{
-    node::{Node, NodeBuilder},
-    port::subscriber::{Subscriber, SubscriberCreateError},
-    prelude::{EventId, NodeName, ZeroCopySend},
+    node::{Node, NodeBuilder, NodeState},
+    port::{
+        ReceiveError,
+        listener::ListenerCreateError,
+        subscriber::{Subscriber, SubscriberCreateError},
+    },
+    prelude::{CallbackProgression, EventId, NodeName, ZeroCopySend},
     service::ipc_threadsafe,
 };
 use ::iceoryx2_bb_container::vector::StaticVec;
@@ -166,7 +175,7 @@ fn build_node() -> ::color_eyre::Result<Node<ipc_threadsafe::Service>> {
 }
 
 /// Create publish subscribe service.
-fn build_serice(
+fn build_serice_(
     node: &Node<ipc_threadsafe::Service>,
 ) -> ::color_eyre::Result<PublishSubscribeService> {
     node.service_builder(&"open_path".try_into()?)
@@ -174,6 +183,28 @@ fn build_serice(
         .max_subscribers(1)
         .open_or_create()
         .map_err(|err| eyre!(err))
+}
+
+/// Create publish subscribe service.
+fn build_serice(
+    node: &Node<ipc_threadsafe::Service>,
+) -> ::color_eyre::Result<PublishSubscribeService> {
+    build_serice_(node).or_else(|_| {
+        Node::<ipc_threadsafe::Service>::list(
+            ::iceoryx2::config::Config::global_config(),
+            |node_state| {
+                if let NodeState::<ipc_threadsafe::Service>::Dead(view) = node_state {
+                    ::log::info!("cleanup of dead node {view:?}");
+                    if let Err(err) = view.remove_stale_resources() {
+                        ::log::warn!("could nod clean up stale resources, {err:?}");
+                    }
+                }
+                CallbackProgression::Continue
+            },
+        )?;
+
+        build_serice_(node)
+    })
 }
 
 /// Create event service.
@@ -185,15 +216,27 @@ fn build_event_service(node: &Node<ipc_threadsafe::Service>) -> ::color_eyre::Re
 }
 
 /// Create subscriber thread.
-fn create_subscriber_thread(
-    subscriber: Subscriber<ipc_threadsafe::Service, OpenRequest, ()>,
+fn create_subscriber_thread_<M, E, S>(
+    subscriber: Subscriber<ipc_threadsafe::Service, M, ()>,
     event_service: EventService,
-    tx: Sender<Message>,
-) -> ::color_eyre::Result<()> {
+    thread_name: String,
+    mut send: S,
+) -> Result<(), E>
+where
+    M: Debug + ZeroCopySend,
+    E: 'static
+        + Send
+        + Sync
+        + Display
+        + From<::std::io::Error>
+        + From<ListenerCreateError>
+        + From<ReceiveError>,
+    S: 'static + Send + FnMut(&M) -> Result<(), E>,
+{
     ::std::thread::Builder::new()
-        .name("line-viewer-ipc".to_owned())
+        .name(thread_name)
         .spawn(move || {
-            let receive_messages = move || -> ::color_eyre::Result<()> {
+            let mut receive_messages = move || -> Result<(), E> {
                 let listener = event_service.listener_builder().create()?;
                 while listener
                     .timed_wait_all(|_| {}, Duration::from_millis(200))
@@ -201,24 +244,7 @@ fn create_subscriber_thread(
                 {
                     while let Some(message) = subscriber.receive()? {
                         ::log::info!("received ipc message");
-                        let path = message.path.try_into_path()?.to_path_buf();
-                        let open_at = message.open_at;
-                        let home = message
-                            .home
-                            .as_ref()
-                            .map(|home| home.try_into_path())
-                            .transpose()?
-                            .map(|path| path.to_path_buf());
-                        let theme = ThemeValueEnum::value_variants()
-                            .get(message.themeidx)
-                            .copied()
-                            .unwrap_or_default();
-
-                        tx.send(if open_at {
-                            Message::DialogAt { path, home, theme }
-                        } else {
-                            Message::OpenFile { path, home, theme }
-                        })?;
+                        send(&message)?;
                     }
                 }
                 Ok(())
@@ -229,9 +255,42 @@ fn create_subscriber_thread(
             }
 
             ::log::info!("closing ipc thread");
-        })
-        .map_err(|err| eyre!(err))
-        .map(|_| {})
+        })?;
+    Ok(())
+}
+
+/// Create subscriber thread.
+fn create_subscriber_thread(
+    subscriber: Subscriber<ipc_threadsafe::Service, OpenRequest, ()>,
+    event_service: EventService,
+    tx: Sender<Message>,
+) -> ::color_eyre::Result<()> {
+    create_subscriber_thread_::<OpenRequest, _, _>(
+        subscriber,
+        event_service,
+        "line-viewer-ipc".to_owned(),
+        move |message: &OpenRequest| -> ::color_eyre::Result<()> {
+            let path = message.path.try_into_path()?.to_path_buf();
+            let open_at = message.open_at;
+            let home = message
+                .home
+                .as_ref()
+                .map(|home| home.try_into_path())
+                .transpose()?
+                .map(|path| path.to_path_buf());
+            let theme = ThemeValueEnum::value_variants()
+                .get(message.themeidx)
+                .copied()
+                .unwrap_or_default();
+
+            tx.send(if open_at {
+                Message::DialogAt { path, home, theme }
+            } else {
+                Message::OpenFile { path, home, theme }
+            })?;
+            Ok(())
+        },
+    )
 }
 
 /// Publish input to eventual subscribers.
@@ -283,6 +342,7 @@ fn publish_input(
 ///
 /// # Errors
 /// If ipc cannot be established.
+#[inline(never)]
 pub fn ipc_setup(
     tx: Sender<Message>,
     file: Option<&Path>,

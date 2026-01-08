@@ -13,7 +13,6 @@ use ::tap::Pipe;
 
 use crate::{
     cli::Open,
-    ipc::ipc_setup,
     line_view::{self, LineView},
 };
 
@@ -32,10 +31,10 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
     let (tx, rx) = ::flume::bounded::<Message>(16);
 
     if ipc.is_enabled() {
-        match ipc_setup(tx, file.as_deref(), home.as_deref(), theme) {
+        match crate::ipc::ipc_setup(tx, file.as_deref(), home.as_deref(), theme) {
             // On error we continue without ipc.
             Err(err) => {
-                ::log::error!("ipc setup failed\n{err}");
+                ::log::error!("ipc setup failed\n{err:?}");
             }
             // I we are the subscriber we continue.
             Ok(ControlFlow::Continue(..)) => {}
