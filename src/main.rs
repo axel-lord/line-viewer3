@@ -8,7 +8,12 @@ use ::line_viewer3::{
     ui,
 };
 use ::log::LevelFilter;
+use ::mimalloc::MiMalloc;
 use ::tap::Conv;
+
+/// Use mimalloc as global allocator
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() -> ::color_eyre::Result<()> {
     let cli = if let Some(path) = ::std::env::args_os().next().map(PathBuf::from)
