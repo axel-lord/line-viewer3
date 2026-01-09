@@ -3,18 +3,35 @@
 use ::core::{fmt::Debug, ops::ControlFlow};
 use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
 use ::iced::{
     Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
 };
 use ::katalog_lib::ThemeValueEnum;
+use ::katalog_lib_ipc::{StaticPath, ZeroCopySend};
 use ::tap::Pipe;
 
 use crate::{
     cli::Open,
     line_view::{self, LineView},
 };
+
+/// Request a path be either opened or used ast the start
+/// of a file dialog.
+#[derive(Debug, Clone, ZeroCopySend)]
+#[repr(C)]
+pub struct OpenRequest {
+    /// If true a file dialog should be opened at location.
+    open_at: bool,
+    /// Path used for either opening or file dialog.
+    path: StaticPath<4096>,
+    /// Path used for home.
+    home: Option<StaticPath<4096>>,
+    /// Index of theme used.
+    themeidx: usize,
+}
 
 /// Run application ui.
 ///
@@ -29,9 +46,51 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
     } = open;
 
     let (tx, rx) = ::flume::bounded::<Message>(16);
+    let home = home.or_else(::std::env::home_dir);
+    let cwd = ::std::env::current_dir()?;
 
     if ipc.is_enabled() {
-        match crate::ipc::ipc_setup(tx, file.as_deref(), home.as_deref(), theme) {
+        let single_process = ::katalog_lib_ipc::single_process()
+            .node_name("line_viewer")
+            .service_name("open_path")
+            .thread_name(|| "line_viewer_subscriber".to_owned())
+            .input(|| -> ::color_eyre::Result<OpenRequest> {
+                Ok(OpenRequest {
+                    open_at: file.is_none(),
+                    path: file.as_ref().unwrap_or(&cwd).as_path().try_into()?,
+                    home: home
+                        .as_ref()
+                        .map(|home| home.as_path().try_into())
+                        .transpose()?,
+                    themeidx: ThemeValueEnum::value_variants()
+                        .iter()
+                        .copied()
+                        .position(|variant| variant == theme)
+                        .unwrap_or(usize::MAX),
+                })
+            })
+            .receive(move |message| -> ::color_eyre::Result<()> {
+                let path = message.path.try_into_path()?.to_path_buf();
+                let open_at = message.open_at;
+                let home = message
+                    .home
+                    .as_ref()
+                    .map(|home| home.try_into_path())
+                    .transpose()?
+                    .map(|path| path.to_path_buf());
+                let theme = ThemeValueEnum::value_variants()
+                    .get(message.themeidx)
+                    .copied()
+                    .unwrap_or_default();
+
+                tx.send(if open_at {
+                    Message::DialogAt { path, home, theme }
+                } else {
+                    Message::OpenFile { path, home, theme }
+                })?;
+                Ok(())
+            });
+        match single_process.setup() {
             // On error we continue without ipc.
             Err(err) => {
                 ::log::error!("ipc setup failed\n{err:?}");
@@ -42,9 +101,6 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
             Ok(ControlFlow::Break(..)) => return Ok(()),
         }
     }
-
-    let home = home.or_else(::std::env::home_dir);
-    let cwd = ::std::env::current_dir()?;
     ::iced::daemon(
         move || {
             let open_path = Task::done(if let Some(path) = file.clone() {
