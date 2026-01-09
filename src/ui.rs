@@ -1,6 +1,6 @@
 //! Ui implementation.
 
-use ::core::{fmt::Debug, ops::ControlFlow};
+use ::core::{fmt::Debug, ops::ControlFlow, time::Duration};
 use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use ::clap::ValueEnum;
@@ -10,11 +10,11 @@ use ::iced::{
     Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
 };
 use ::katalog_lib::ThemeValueEnum;
-use ::katalog_lib_ipc::{StaticPath, ZeroCopySend};
+use ::katalog_lib_ipc::{StaticPath, ZeroCopySend, single_process::SubscriberHandle};
 use ::tap::Pipe;
 
 use crate::{
-    cli::Open,
+    cli::{Daemon, Open},
     line_view::{self, LineView},
 };
 
@@ -33,6 +33,73 @@ pub struct OpenRequest {
     themeidx: usize,
 }
 
+/// Create receiver for ipc.
+fn ipc_receiver(
+    tx: ::flume::Sender<Message>,
+) -> impl for<'m> Fn(&'m OpenRequest) -> ::color_eyre::Result<()> {
+    move |message| {
+        let path = message.path.try_into_path()?.to_path_buf();
+        let open_at = message.open_at;
+        let home = message
+            .home
+            .as_ref()
+            .map(|home| home.try_into_path())
+            .transpose()?
+            .map(|path| path.to_path_buf());
+        let theme = ThemeValueEnum::value_variants()
+            .get(message.themeidx)
+            .copied()
+            .unwrap_or_default();
+
+        tx.send(if open_at {
+            Message::DialogAt { path, home, theme }
+        } else {
+            Message::OpenFile { path, home, theme }
+        })?;
+        Ok(())
+    }
+}
+
+/// Run application daemon.
+///
+/// # Errors
+/// If ui cannot be created.
+pub fn run_daemon(daemon: Daemon) -> ::color_eyre::Result<()> {
+    let Daemon { timeout } = daemon;
+    let timeout = Duration::from_millis(timeout.into());
+    let (tx, rx) = ::flume::bounded::<Message>(16);
+
+    let handle = ::katalog_lib_ipc::single_process::subscribe_only()
+        .node_name("line_viewer")
+        .service_name("open_path")
+        .thread_name(|| "line_viewer_subscriber".to_owned())
+        .receive(ipc_receiver(tx))
+        .timeout(timeout)
+        .setup()?;
+
+    ::iced::daemon(
+        move || {
+            let subscriber_handle = handle.clone();
+            let receive_message = Task::stream(rx.clone().into_stream());
+            (
+                State {
+                    subscriber_handle,
+                    is_daemon: true,
+                    ..State::default()
+                },
+                receive_message,
+            )
+        },
+        State::update,
+        State::view,
+    )
+    .title(State::title)
+    .theme(State::theme)
+    .subscription(State::subscription)
+    .run()
+    .map_err(|err| eyre!(err))
+}
+
 /// Run application ui.
 ///
 /// # Errors
@@ -49,12 +116,12 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
     let home = home.or_else(::std::env::home_dir);
     let cwd = ::std::env::current_dir()?;
 
-    if ipc.is_enabled() {
+    let subscriber_handle = if ipc.is_enabled() {
         let single_process = ::katalog_lib_ipc::single_process()
             .node_name("line_viewer")
             .service_name("open_path")
             .thread_name(|| "line_viewer_subscriber".to_owned())
-            .input(|| -> ::color_eyre::Result<OpenRequest> {
+            .input(|| {
                 Ok(OpenRequest {
                     open_at: file.is_none(),
                     path: file.as_ref().unwrap_or(&cwd).as_path().try_into()?,
@@ -69,40 +136,24 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
                         .unwrap_or(usize::MAX),
                 })
             })
-            .receive(move |message| -> ::color_eyre::Result<()> {
-                let path = message.path.try_into_path()?.to_path_buf();
-                let open_at = message.open_at;
-                let home = message
-                    .home
-                    .as_ref()
-                    .map(|home| home.try_into_path())
-                    .transpose()?
-                    .map(|path| path.to_path_buf());
-                let theme = ThemeValueEnum::value_variants()
-                    .get(message.themeidx)
-                    .copied()
-                    .unwrap_or_default();
-
-                tx.send(if open_at {
-                    Message::DialogAt { path, home, theme }
-                } else {
-                    Message::OpenFile { path, home, theme }
-                })?;
-                Ok(())
-            });
+            .receive(ipc_receiver(tx));
         match single_process.setup() {
             // On error we continue without ipc.
             Err(err) => {
                 ::log::error!("ipc setup failed\n{err:?}");
+                None
             }
             // I we are the subscriber we continue.
-            Ok(ControlFlow::Continue(..)) => {}
+            Ok(ControlFlow::Continue(handle)) => Some(handle),
             // If the inputs were sent to another instance we return.
             Ok(ControlFlow::Break(..)) => return Ok(()),
         }
-    }
+    } else {
+        None
+    };
     ::iced::daemon(
         move || {
+            let subscriber_handle = subscriber_handle.clone();
             let open_path = Task::done(if let Some(path) = file.clone() {
                 Message::OpenFile {
                     path,
@@ -117,7 +168,13 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
                 }
             });
             let receive_message = Task::stream(rx.clone().into_stream());
-            (State::default(), Task::batch([open_path, receive_message]))
+            (
+                State {
+                    subscriber_handle: subscriber_handle.unwrap_or_default(),
+                    ..Default::default()
+                },
+                Task::batch([open_path, receive_message]),
+            )
         },
         State::update,
         State::view,
@@ -180,6 +237,8 @@ pub enum Message {
         /// Theme to use.
         theme: ThemeValueEnum,
     },
+    /// Attempt to exit if no windows are open, or not running as a daemon.
+    TryExit,
 }
 
 /// Window state.
@@ -208,6 +267,10 @@ struct WindowState {
 struct State {
     /// Windows of application.
     windows: BTreeMap<window::Id, WindowState>,
+    /// Handle to subscriber.
+    subscriber_handle: SubscriberHandle,
+    /// Set to true if daemon.
+    is_daemon: bool,
 }
 
 impl State {
@@ -228,7 +291,24 @@ impl State {
 
     /// Application subscriptions.
     pub fn subscription(&self) -> Subscription<Message> {
-        window::close_events().map(Message::Close)
+        Subscription::batch([
+            ::iced::time::every(Duration::from_millis(15))
+                .with(self.subscriber_handle.clone())
+                .filter_map(|(handle, _)| handle.is_closed().then_some(Message::TryExit)),
+            window::close_events().map(Message::Close),
+        ])
+    }
+
+    /// Exit if not a daemon, and no windows are open.
+    fn try_exit(&self) -> Task<Message> {
+        if self.subscriber_handle.is_closed() && self.windows.is_empty() {
+            ::iced::exit()
+        } else {
+            if !self.is_daemon && self.windows.is_empty() {
+                self.subscriber_handle.close();
+            }
+            Task::none()
+        }
     }
 
     /// Update ui state.
@@ -246,12 +326,9 @@ impl State {
             }
             Message::Close(id) => {
                 self.windows.remove(&id);
-                if self.windows.is_empty() {
-                    ::iced::exit()
-                } else {
-                    Task::none()
-                }
+                self.try_exit()
             }
+            Message::TryExit => self.try_exit(),
             Message::LineHover { id, idx } => {
                 if let Some(window) = self.windows.get_mut(&id) {
                     window.hovered = Some(idx);

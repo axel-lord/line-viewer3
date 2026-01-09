@@ -31,5 +31,6 @@ fn main() -> ::color_eyre::Result<()> {
         Action::Application(application) => application.generate(),
         Action::Print(print) => print.print(),
         Action::Open(open) => ui::run(open),
+        Action::Daemon(daemon) => ui::run_daemon(daemon),
     }
 }

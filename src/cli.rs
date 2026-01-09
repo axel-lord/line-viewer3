@@ -67,6 +67,9 @@ pub enum Action {
     Application(Application),
     /// Open line-viewer file [default command].
     Open(Open),
+    /// Open application without any input subscribing to events from
+    /// other invocations.
+    Daemon(Daemon),
     /// Print line-viewer file.
     Print(Print),
 }
@@ -278,4 +281,14 @@ impl Default for Open {
             file: None,
         }
     }
+}
+
+/// Open application without any input subscribing to events from
+/// other invocations.
+#[derive(Debug, Clone, Args)]
+pub struct Daemon {
+    /// Timeout in milliseconds before stopping attempts to replace prior
+    /// subscribers.
+    #[arg(long, short, default_value_t = 200)]
+    pub timeout: u16,
 }
