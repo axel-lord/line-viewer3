@@ -1,70 +1,180 @@
 //! Ui implementation.
 
-use ::std::{collections::BTreeMap, sync::Arc};
+use ::core::{fmt::Debug, ops::ControlFlow, time::Duration};
+use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
 use ::iced::{
     Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
 };
+use ::katalog_lib::ThemeValueEnum;
+use ::katalog_lib_ipc::{StaticPath, ZeroCopySend, single_process::SubscriberHandle};
 use ::tap::Pipe;
 
 use crate::{
-    cli::Open,
+    cli::{Daemon, Open},
     line_view::{self, LineView},
 };
+
+/// Request a path be either opened or used ast the start
+/// of a file dialog.
+#[derive(Debug, Clone, ZeroCopySend)]
+#[repr(C)]
+pub struct OpenRequest {
+    /// If true a file dialog should be opened at location.
+    open_at: bool,
+    /// Path used for either opening or file dialog.
+    path: StaticPath<4096>,
+    /// Path used for home.
+    home: Option<StaticPath<4096>>,
+    /// Index of theme used.
+    themeidx: usize,
+}
+
+/// Create receiver for ipc.
+fn ipc_receiver(
+    tx: ::flume::Sender<Message>,
+) -> impl for<'m> Fn(&'m OpenRequest) -> ::color_eyre::Result<()> {
+    move |message| {
+        let path = message.path.try_into_path()?.to_path_buf();
+        let open_at = message.open_at;
+        let home = message
+            .home
+            .as_ref()
+            .map(|home| home.try_into_path())
+            .transpose()?
+            .map(|path| path.to_path_buf());
+        let theme = ThemeValueEnum::value_variants()
+            .get(message.themeidx)
+            .copied()
+            .unwrap_or_default();
+
+        tx.send(if open_at {
+            Message::DialogAt { path, home, theme }
+        } else {
+            Message::OpenFile { path, home, theme }
+        })?;
+        Ok(())
+    }
+}
+
+/// Run application daemon.
+///
+/// # Errors
+/// If ui cannot be created.
+pub fn run_daemon(daemon: Daemon) -> ::color_eyre::Result<()> {
+    let Daemon { timeout } = daemon;
+    let timeout = Duration::from_millis(timeout.into());
+    let (tx, rx) = ::flume::bounded::<Message>(16);
+
+    let handle = ::katalog_lib_ipc::single_process::subscribe_only()
+        .node_name("line_viewer")
+        .service_name("open_path")
+        .thread_name(|| "line_viewer_subscriber".to_owned())
+        .receive(ipc_receiver(tx))
+        .timeout(timeout)
+        .setup()?;
+
+    ::iced::daemon(
+        move || {
+            let subscriber_handle = handle.clone();
+            let receive_message = Task::stream(rx.clone().into_stream());
+            (
+                State {
+                    subscriber_handle,
+                    is_daemon: true,
+                    ..State::default()
+                },
+                receive_message,
+            )
+        },
+        State::update,
+        State::view,
+    )
+    .title(State::title)
+    .theme(State::theme)
+    .subscription(State::subscription)
+    .run()
+    .map_err(|err| eyre!(err))
+}
 
 /// Run application ui.
 ///
 /// # Errors
 /// If ui cannot be created.
 pub fn run(open: Open) -> ::color_eyre::Result<()> {
-    let Open { theme, home, file } = open;
-    let home = home.or_else(::std::env::home_dir);
-    let file = file.map_or_else(
-        || {
-            ::rfd::FileDialog::new()
-                .set_title("Open Line View File")
-                .pick_file()
-                .ok_or_else(|| eyre!("no file selected"))
-        },
-        Ok,
-    )?;
-    let file = file
-        .to_str()
-        .ok_or_else(|| eyre!("path {file:?} is not valid utf-8"))?
-        .to_owned();
+    let Open {
+        theme,
+        home,
+        file,
+        ipc,
+    } = open;
 
+    let (tx, rx) = ::flume::bounded::<Message>(16);
+    let home = home.or_else(::std::env::home_dir);
+    let cwd = ::std::env::current_dir()?;
+
+    let subscriber_handle = if ipc.is_enabled() {
+        let single_process = ::katalog_lib_ipc::single_process()
+            .node_name("line_viewer")
+            .service_name("open_path")
+            .thread_name(|| "line_viewer_subscriber".to_owned())
+            .input(|| {
+                Ok(OpenRequest {
+                    open_at: file.is_none(),
+                    path: file.as_ref().unwrap_or(&cwd).as_path().try_into()?,
+                    home: home
+                        .as_ref()
+                        .map(|home| home.as_path().try_into())
+                        .transpose()?,
+                    themeidx: ThemeValueEnum::value_variants()
+                        .iter()
+                        .copied()
+                        .position(|variant| variant == theme)
+                        .unwrap_or(usize::MAX),
+                })
+            })
+            .receive(ipc_receiver(tx));
+        match single_process.setup() {
+            // On error we continue without ipc.
+            Err(err) => {
+                ::log::error!("ipc setup failed\n{err:?}");
+                None
+            }
+            // I we are the subscriber we continue.
+            Ok(ControlFlow::Continue(handle)) => Some(handle),
+            // If the inputs were sent to another instance we return.
+            Ok(ControlFlow::Break(..)) => return Ok(()),
+        }
+    } else {
+        None
+    };
     ::iced::daemon(
         move || {
-            let home = home.clone();
-            let file = file.clone();
-            let task = Task::future(::smol::unblock(move || {
-                let title = format!("Line Viewer: {file}");
-                let theme = theme.into_inner();
-                let content = LineView::read_path(
-                    file.into(),
-                    line_view::provide::PathReadProvider,
-                    home.as_deref(),
-                )
-                .map_err(|err| err.to_string());
-
-                Arc::new(Window {
-                    title,
+            let subscriber_handle = subscriber_handle.clone();
+            let open_path = Task::done(if let Some(path) = file.clone() {
+                Message::OpenFile {
+                    path,
+                    home: home.clone(),
                     theme,
-                    content,
-                })
-            }))
-            .then(|window| {
-                let (_, task) = window::open(window::Settings::default());
-
-                task.map(move |id| {
-                    let window = window.clone();
-                    Message::Open { id, window }
-                })
+                }
+            } else {
+                Message::DialogAt {
+                    path: cwd.clone(),
+                    home: home.clone(),
+                    theme,
+                }
             });
-
-            (State::default(), task)
+            let receive_message = Task::stream(rx.clone().into_stream());
+            (
+                State {
+                    subscriber_handle: subscriber_handle.unwrap_or_default(),
+                    ..Default::default()
+                },
+                Task::batch([open_path, receive_message]),
+            )
         },
         State::update,
         State::view,
@@ -78,9 +188,9 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
 
 /// Ui message type.
 #[derive(Debug, Clone)]
-enum Message {
-    /// Open a new window.
-    Open {
+pub enum Message {
+    /// Add window to state.
+    AddWindow {
         /// Id of window.
         id: window::Id,
         /// Content of window.
@@ -109,11 +219,31 @@ enum Message {
         /// Line number to execute.
         line: usize,
     },
+    /// Open a file dialog at location.
+    DialogAt {
+        /// Path to open dialog at.
+        path: PathBuf,
+        /// Home directory to use.
+        home: Option<PathBuf>,
+        /// Theme to use.
+        theme: ThemeValueEnum,
+    },
+    /// Open a line-viewer file.
+    OpenFile {
+        /// Path of file.
+        path: PathBuf,
+        /// Home directory to use.
+        home: Option<PathBuf>,
+        /// Theme to use.
+        theme: ThemeValueEnum,
+    },
+    /// Attempt to exit if no windows are open, or not running as a daemon.
+    TryExit,
 }
 
 /// Window state.
 #[derive(Debug)]
-struct Window {
+pub struct Window {
     /// Theme in use.
     theme: Theme,
     /// Window Title.
@@ -137,6 +267,10 @@ struct WindowState {
 struct State {
     /// Windows of application.
     windows: BTreeMap<window::Id, WindowState>,
+    /// Handle to subscriber.
+    subscriber_handle: SubscriberHandle,
+    /// Set to true if daemon.
+    is_daemon: bool,
 }
 
 impl State {
@@ -157,13 +291,30 @@ impl State {
 
     /// Application subscriptions.
     pub fn subscription(&self) -> Subscription<Message> {
-        window::close_events().map(Message::Close)
+        Subscription::batch([
+            ::iced::time::every(Duration::from_millis(15))
+                .with(self.subscriber_handle.clone())
+                .filter_map(|(handle, _)| handle.is_closed().then_some(Message::TryExit)),
+            window::close_events().map(Message::Close),
+        ])
+    }
+
+    /// Exit if not a daemon, and no windows are open.
+    fn try_exit(&self) -> Task<Message> {
+        if self.subscriber_handle.is_closed() && self.windows.is_empty() {
+            ::iced::exit()
+        } else {
+            if !self.is_daemon && self.windows.is_empty() {
+                self.subscriber_handle.close();
+            }
+            Task::none()
+        }
     }
 
     /// Update ui state.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Open { id, window } => {
+            Message::AddWindow { id, window } => {
                 self.windows.insert(
                     id,
                     WindowState {
@@ -175,12 +326,9 @@ impl State {
             }
             Message::Close(id) => {
                 self.windows.remove(&id);
-                if self.windows.is_empty() {
-                    ::iced::exit()
-                } else {
-                    Task::none()
-                }
+                self.try_exit()
             }
+            Message::TryExit => self.try_exit(),
             Message::LineHover { id, idx } => {
                 if let Some(window) = self.windows.get_mut(&id) {
                     window.hovered = Some(idx);
@@ -208,6 +356,49 @@ impl State {
                     .discard()
                 })
                 .unwrap_or_else(Task::none),
+            Message::DialogAt { path, home, theme } => Task::future(async move {
+                let path = ::rfd::AsyncFileDialog::new()
+                    .set_title("Open Line View File")
+                    .set_directory(path)
+                    .pick_file()
+                    .await?
+                    .path()
+                    .to_path_buf();
+
+                Some(Message::OpenFile { path, home, theme })
+            })
+            .then(|message| message.map_or_else(Task::none, Task::done)),
+            Message::OpenFile { path, home, theme } => {
+                let Some(file) = path.to_str() else {
+                    ::log::error!("path {path:?} is not valid utf-8");
+                    return Task::none();
+                };
+                let file = file.to_owned();
+                Task::future(::smol::unblock(move || {
+                    let title = format!("Line Viewer: {file}");
+                    let theme = theme.into_inner();
+                    let content = LineView::read_path(
+                        file.into(),
+                        line_view::provide::PathReadProvider,
+                        home.as_deref(),
+                    )
+                    .map_err(|err| err.to_string());
+
+                    Arc::new(Window {
+                        title,
+                        theme,
+                        content,
+                    })
+                }))
+                .then(|window| {
+                    let (_, task) = window::open(window::Settings::default());
+
+                    task.map(move |id| {
+                        let window = window.clone();
+                        Message::AddWindow { id, window }
+                    })
+                })
+            }
         }
     }
 
@@ -279,10 +470,10 @@ impl State {
                                     .size(12)
                             }
                             .pipe(widget::button)
-                            .on_press_maybe((!line.text().is_empty()).then(|| Message::ExecLine {
-                                id,
-                                line: line.line(),
-                            }))
+                            .on_press_maybe(
+                                (!line.text().is_empty())
+                                    .then_some(Message::ExecLine { id, line: idx }),
+                            )
                             .padding(0)
                             .style(widget::button::text)
                             .pipe(widget::mouse_area)
