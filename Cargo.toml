@@ -41,6 +41,7 @@ todo = "warn"
 unused_result_ok = "warn"
 
 [dependencies]
+bon = "3.8.2"
 clap = { version = "4.5.53", features = ["derive"] }
 clap_complete = "4.5.61"
 color-eyre = "0.6.5"
@@ -55,6 +56,7 @@ katalog-lib = { git = "https://github.com/axel-lord/katalog-lib" }
 katalog-lib-ipc = { git = "https://github.com/axel-lord/katalog-lib" }
 log = "0.4.29"
 mimalloc = "0.1.48"
+notify = { version = "8.2.0", features = ["flume"] }
 patharg = "0.4.1"
 rfd = { version = "0.16.0", default-features = false, features = ["gtk3"]}
 rustc-hash = "2.1.1"

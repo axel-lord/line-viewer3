@@ -1,7 +1,12 @@
 //! Ui implementation.
 
-use ::core::{fmt::Debug, ops::ControlFlow, time::Duration};
-use ::std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use ::core::{cell::RefCell, fmt::Debug, ops::ControlFlow, time::Duration};
+use ::std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    rc::Rc,
+    sync::Arc,
+};
 
 use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
@@ -11,11 +16,19 @@ use ::iced::{
 };
 use ::katalog_lib::ThemeValueEnum;
 use ::katalog_lib_ipc::{StaticPath, ZeroCopySend, single_process::SubscriberHandle};
+use ::notify::{
+    EventKind, RecommendedWatcher, Watcher,
+    event::{CreateKind, ModifyKind},
+    recommended_watcher,
+};
 use ::tap::Pipe;
 
 use crate::{
     cli::{Daemon, Open},
-    line_view::{self, LineView},
+    line_view::{
+        self, LineView,
+        provide::{self, PathReadProvider},
+    },
 };
 
 /// Request a path be either opened or used ast the start
@@ -60,6 +73,59 @@ fn ipc_receiver(
     }
 }
 
+/// Run application.
+#[bon::builder]
+#[builder(finish_fn = run)]
+fn application<F>(
+    /// If application should be ran as a daemon.
+    #[builder(default = false)]
+    is_daemon: bool,
+    /// Handle of ipc subscriber.
+    subscriber: Option<SubscriberHandle>,
+    /// Message receiver.
+    receiver: ::flume::Receiver<Message>,
+    /// Message sender.
+    sender: ::flume::Sender<Message>,
+    /// Additional tasks.
+    task: F,
+) -> ::color_eyre::Result<()>
+where
+    F: 'static + Fn() -> Task<Message>,
+{
+    ::iced::daemon(
+        move || {
+            let sender = sender.clone();
+            let watcher =
+                recommended_watcher(
+                    move |event: ::notify::Result<::notify::Event>| match event {
+                        Ok(event) => _ = sender.send(Message::Watcher(event)),
+                        Err(err) => ::log::error!("notify watcher error\n{err}"),
+                    },
+                )
+                .map_err(|err| ::log::error!("could not create notify watcher\n{err}"))
+                .ok();
+            let subscriber_handle = subscriber.clone();
+            let receive_message = Task::stream(receiver.clone().into_stream());
+            (
+                State {
+                    subscriber_handle: subscriber_handle.unwrap_or_default(),
+                    is_daemon,
+                    watcher,
+                    ..Default::default()
+                },
+                Task::batch([receive_message, task()]),
+            )
+        },
+        State::update,
+        State::view,
+    )
+    .title(State::title)
+    .theme(State::theme)
+    .subscription(State::subscription)
+    .run()
+    .map_err(|err| eyre!(err))
+}
+
 /// Run application daemon.
 ///
 /// # Errors
@@ -73,31 +139,17 @@ pub fn run_daemon(daemon: Daemon) -> ::color_eyre::Result<()> {
         .node_name("line_viewer")
         .service_name("open_path")
         .thread_name(|| "line_viewer_subscriber".to_owned())
-        .receive(ipc_receiver(tx))
+        .receive(ipc_receiver(tx.clone()))
         .timeout(timeout)
         .setup()?;
 
-    ::iced::daemon(
-        move || {
-            let subscriber_handle = handle.clone();
-            let receive_message = Task::stream(rx.clone().into_stream());
-            (
-                State {
-                    subscriber_handle,
-                    is_daemon: true,
-                    ..State::default()
-                },
-                receive_message,
-            )
-        },
-        State::update,
-        State::view,
-    )
-    .title(State::title)
-    .theme(State::theme)
-    .subscription(State::subscription)
-    .run()
-    .map_err(|err| eyre!(err))
+    application()
+        .is_daemon(true)
+        .subscriber(handle)
+        .receiver(rx)
+        .sender(tx)
+        .task(Task::none)
+        .run()
 }
 
 /// Run application ui.
@@ -136,7 +188,7 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
                         .unwrap_or(usize::MAX),
                 })
             })
-            .receive(ipc_receiver(tx));
+            .receive(ipc_receiver(tx.clone()));
         match single_process.setup() {
             // On error we continue without ipc.
             Err(err) => {
@@ -151,10 +203,13 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
     } else {
         None
     };
-    ::iced::daemon(
-        move || {
-            let subscriber_handle = subscriber_handle.clone();
-            let open_path = Task::done(if let Some(path) = file.clone() {
+
+    application()
+        .maybe_subscriber(subscriber_handle)
+        .receiver(rx)
+        .sender(tx)
+        .task(move || {
+            Task::done(if let Some(path) = file.clone() {
                 Message::OpenFile {
                     path,
                     home: home.clone(),
@@ -166,24 +221,9 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
                     home: home.clone(),
                     theme,
                 }
-            });
-            let receive_message = Task::stream(rx.clone().into_stream());
-            (
-                State {
-                    subscriber_handle: subscriber_handle.unwrap_or_default(),
-                    ..Default::default()
-                },
-                Task::batch([open_path, receive_message]),
-            )
-        },
-        State::update,
-        State::view,
-    )
-    .title(State::title)
-    .theme(State::theme)
-    .subscription(State::subscription)
-    .run()
-    .map_err(|err| eyre!(err))
+            })
+        })
+        .run()
 }
 
 /// Ui message type.
@@ -191,6 +231,14 @@ pub fn run(open: Open) -> ::color_eyre::Result<()> {
 pub enum Message {
     /// Add window to state.
     AddWindow {
+        /// Id of window.
+        id: window::Id,
+        /// Content of window.
+        window: Arc<Window>,
+    },
+    /// Set content of a window.
+    /// Unlike `AddWindow` will not add new entries to windows.
+    SetWindow {
         /// Id of window.
         id: window::Id,
         /// Content of window.
@@ -237,6 +285,10 @@ pub enum Message {
         /// Theme to use.
         theme: ThemeValueEnum,
     },
+    /// Notify watcher event.
+    Watcher(::notify::Event),
+    /// Add a path to be watched.
+    Watch(PathBuf, window::Id),
     /// Attempt to exit if no windows are open, or not running as a daemon.
     TryExit,
 }
@@ -248,6 +300,8 @@ pub struct Window {
     theme: Theme,
     /// Window Title.
     title: String,
+    /// Window home.
+    home: Option<PathBuf>,
     /// Lines.
     content: Result<LineView, String>,
 }
@@ -262,6 +316,28 @@ struct WindowState {
     hovered: Option<usize>,
 }
 
+#[derive(Debug, Default, Clone)]
+struct PathReadProviderWrapper(PathReadProvider, Rc<RefCell<BTreeSet<PathBuf>>>);
+
+impl PathReadProviderWrapper {
+    /// Get created path set.
+    fn get_set(self) -> BTreeSet<PathBuf> {
+        let Self(_, path_set) = self;
+        path_set.borrow().clone()
+    }
+}
+
+impl provide::Read for PathReadProviderWrapper {
+    type BufRead = <PathReadProvider as provide::Read>::BufRead;
+
+    fn provide(&self, from: &str) -> line_view::Result<Self::BufRead> {
+        let Self(provider, path_set) = self;
+        let reader = provider.provide(from)?;
+        path_set.borrow_mut().insert(PathBuf::from(from));
+        Ok(reader)
+    }
+}
+
 /// Ui state.
 #[derive(Debug, Default)]
 struct State {
@@ -271,6 +347,10 @@ struct State {
     subscriber_handle: SubscriberHandle,
     /// Set to true if daemon.
     is_daemon: bool,
+    /// File update notification watcher.
+    watcher: Option<RecommendedWatcher>,
+    /// Paths watched by windows.
+    watched: BTreeMap<PathBuf, BTreeSet<window::Id>>,
 }
 
 impl State {
@@ -324,8 +404,30 @@ impl State {
                 );
                 Task::none()
             }
+            Message::SetWindow { id, window } => {
+                if let Some(entry) = self.windows.get_mut(&id) {
+                    entry.window = window;
+                } else {
+                    ::log::warn!("could not set window content for id {id:?}");
+                }
+                Task::none()
+            }
             Message::Close(id) => {
                 self.windows.remove(&id);
+
+                let unwatch = self.watched.extract_if(.., |_path, id_set| {
+                    id_set.remove(&id);
+                    id_set.is_empty()
+                });
+
+                for (path, _) in unwatch {
+                    if let Some(watcher) = &mut self.watcher
+                        && let Err(err) = watcher.unwatch(&path)
+                    {
+                        ::log::warn!("could nod unwatch {path:?}\n{err}");
+                    }
+                }
+
                 self.try_exit()
             }
             Message::TryExit => self.try_exit(),
@@ -375,29 +477,114 @@ impl State {
                 };
                 let file = file.to_owned();
                 Task::future(::smol::unblock(move || {
+                    let provider = PathReadProviderWrapper::default();
                     let title = format!("Line Viewer: {file}");
                     let theme = theme.into_inner();
-                    let content = LineView::read_path(
-                        file.into(),
-                        line_view::provide::PathReadProvider,
-                        home.as_deref(),
-                    )
-                    .map_err(|err| err.to_string());
+                    let content =
+                        LineView::read_path(file.into(), provider.clone(), home.as_deref())
+                            .map_err(|err| err.to_string());
 
-                    Arc::new(Window {
-                        title,
-                        theme,
-                        content,
-                    })
+                    (
+                        Arc::new(Window {
+                            title,
+                            home,
+                            theme,
+                            content,
+                        }),
+                        provider.get_set(),
+                    )
                 }))
-                .then(|window| {
-                    let (_, task) = window::open(window::Settings::default());
+                .then(move |(window, path_set)| {
+                    let (id, task) = window::open(window::Settings::default());
 
                     task.map(move |id| {
                         let window = window.clone();
                         Message::AddWindow { id, window }
                     })
+                    .chain(Task::batch(
+                        path_set
+                            .into_iter()
+                            .map(|path| Task::done(Message::Watch(path, id))),
+                    ))
                 })
+            }
+            Message::Watcher(event) => match event.kind {
+                EventKind::Create(CreateKind::File) | EventKind::Modify(ModifyKind::Data(..)) => {
+                    let mut tasks = Vec::new();
+                    for path in event.paths {
+                        let Some(file) = path.to_str() else {
+                            ::log::error!("path {path:?} is not valid utf-8");
+                            continue;
+                        };
+                        let Some(id_set) = self.watched.get(&path) else {
+                            if let Some(watcher) = &mut self.watcher
+                                && let Err(err) = watcher.unwatch(&path)
+                            {
+                                ::log::warn!("could not unwatch {path:?}\n{err}");
+                            };
+                            continue;
+                        };
+                        for id in id_set {
+                            let Some(window) = self.windows.get(id) else {
+                                continue;
+                            };
+                            let file = file.to_owned();
+                            let theme = window.theme.clone();
+                            let home = window.home.clone();
+                            let id = *id;
+                            tasks.push(
+                                Task::future(::smol::unblock(move || {
+                                    let title = format!("Line Viewer: {file}");
+                                    let provider = PathReadProviderWrapper::default();
+                                    let theme = theme;
+                                    let content = LineView::read_path(
+                                        file.into(),
+                                        provider.clone(),
+                                        home.as_deref(),
+                                    )
+                                    .map_err(|err| err.to_string());
+
+                                    (
+                                        id,
+                                        Arc::new(Window {
+                                            title,
+                                            home,
+                                            theme,
+                                            content,
+                                        }),
+                                        provider.get_set(),
+                                    )
+                                }))
+                                .then(
+                                    |(id, window, path_set)| {
+                                        Task::done(Message::SetWindow { id, window }).chain(
+                                            Task::batch(
+                                                path_set.into_iter().map(|path| {
+                                                    Task::done(Message::Watch(path, id))
+                                                }),
+                                            ),
+                                        )
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                    Task::batch(tasks)
+                }
+                _ => Task::none(),
+            },
+            Message::Watch(path, id) => {
+                if let Some(id_set) = self.watched.get_mut(&path) {
+                    id_set.insert(id);
+                } else if let Some(watcher) = &mut self.watcher {
+                    if let Err(err) = watcher.watch(&path, ::notify::RecursiveMode::NonRecursive) {
+                        ::log::error!("could not watch {path:?}\n{err}");
+                    } else {
+                        self.watched.insert(path, BTreeSet::from_iter([id]));
+                    };
+                }
+
+                Task::none()
             }
         }
     }
