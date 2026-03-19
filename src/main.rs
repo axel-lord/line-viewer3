@@ -27,7 +27,14 @@ fn main() -> ::color_eyre::Result<()> {
     };
     ::color_eyre::install()?;
     ::env_logger::builder()
-        .filter_module("line_viewer3", LevelFilter::Info)
+        .filter_module(
+            "line_viewer3",
+            if cfg!(debug_assertions) {
+                LevelFilter::Trace
+            } else {
+                LevelFilter::Info
+            },
+        )
         .init();
 
     match Action::from(cli) {

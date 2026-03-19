@@ -2,6 +2,7 @@
 
 use ::core::{cell::RefCell, fmt::Debug, ops::ControlFlow, time::Duration};
 use ::std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     rc::Rc,
@@ -11,8 +12,15 @@ use ::std::{
 use ::clap::ValueEnum;
 use ::color_eyre::eyre::eyre;
 use ::derive_more::{Deref, DerefMut};
+use ::hashbrown::HashMap;
 use ::iced::{
-    Element, Font, Length::Fill, Padding, Subscription, Task, Theme, font, widget, window,
+    Alignment::Center,
+    Element, Font,
+    Length::Fill,
+    Padding, Subscription, Task, Theme, font,
+    keyboard::{Key, Modifiers},
+    widget::{self},
+    window,
 };
 use ::katalog_lib::ThemeValueEnum;
 use ::katalog_lib_ipc::{StaticPath, ZeroCopySend, single_process::SubscriberHandle};
@@ -108,7 +116,7 @@ where
             let receive_message = Task::stream(receiver.clone().into_stream());
             (
                 State {
-                    subscriber_handle: subscriber_handle.unwrap_or_default(),
+                    subscriber_handle,
                     is_daemon,
                     watcher,
                     ..Default::default()
@@ -244,6 +252,8 @@ pub enum Message {
         /// Content of window.
         window: Arc<Window>,
     },
+    /// Window was given focus.
+    WindowFocused(window::Id),
     /// Close a window.
     Close(window::Id),
     /// Line is hovered.
@@ -291,6 +301,19 @@ pub enum Message {
     Watch(PathBuf, window::Id),
     /// Attempt to exit if no windows are open, or not running as a daemon.
     TryExit,
+    /// Toggle a section.
+    ToggleSection {
+        /// Id of window of line.
+        id: window::Id,
+        /// Section to toggle.
+        section: Section<'static>,
+    },
+    /// Toggle all sections.
+    ToggleAll,
+    /// Close all sections.
+    CollapseAll,
+    /// Open all sections.
+    UncollapseAll,
 }
 
 /// Window state.
@@ -306,6 +329,21 @@ pub struct Window {
     content: Result<LineView, String>,
 }
 
+/// Section of lines to store extra metadata for.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Section<'a> {
+    /// Section is bounded by a title.
+    Title(Cow<'a, str>),
+}
+
+/// Section metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+struct Metadata {
+    /// If the section is collapsed.
+    is_collapsed: bool,
+}
+
+/// State of a window.
 #[derive(Debug, Clone, Deref, DerefMut)]
 struct WindowState {
     /// Static window state.
@@ -314,8 +352,11 @@ struct WindowState {
     window: Arc<Window>,
     /// Dynamic window state.
     hovered: Option<usize>,
+    /// Section Metadata.
+    metadata: HashMap<Section<'static>, Metadata>,
 }
 
+/// Wrap a [PathReadProvider] adding provided paths to set.
 #[derive(Debug, Default, Clone)]
 struct PathReadProviderWrapper(PathReadProvider, Rc<RefCell<BTreeSet<PathBuf>>>);
 
@@ -338,15 +379,50 @@ impl provide::Read for PathReadProviderWrapper {
     }
 }
 
+/// Styled title widet.
+fn title(title: &str, is_collapsed: bool, id: window::Id) -> Element<'_, Message> {
+    let font = Font {
+        weight: font::Weight::ExtraBold,
+        ..Default::default()
+    };
+    let indicator = widget::text(if is_collapsed { "+" } else { "-" })
+        .size(16)
+        .width(10)
+        .center()
+        .font(font);
+    let text = widget::text(title)
+        .wrapping(widget::text::Wrapping::None)
+        .size(16)
+        .font(font);
+
+    widget::row![indicator, text]
+        .padding(0)
+        .spacing(5)
+        .align_y(Center)
+        .pipe(widget::button)
+        .style(widget::button::text)
+        .padding(0)
+        .on_press_with(move || Message::ToggleSection {
+            id,
+            section: title
+                .to_owned()
+                .pipe(Cow::<str>::Owned)
+                .pipe(Section::Title),
+        })
+        .pipe(Element::from)
+}
+
 /// Ui state.
 #[derive(Debug, Default)]
 struct State {
     /// Windows of application.
     windows: BTreeMap<window::Id, WindowState>,
     /// Handle to subscriber.
-    subscriber_handle: SubscriberHandle,
+    subscriber_handle: Option<SubscriberHandle>,
     /// Set to true if daemon.
     is_daemon: bool,
+    /// Last focused window.
+    last_focused: Option<window::Id>,
     /// File update notification watcher.
     watcher: Option<RecommendedWatcher>,
     /// Paths watched by windows.
@@ -374,20 +450,48 @@ impl State {
         Subscription::batch([
             ::iced::time::every(Duration::from_millis(15))
                 .with(self.subscriber_handle.clone())
-                .filter_map(|(handle, _)| handle.is_closed().then_some(Message::TryExit)),
+                .filter_map(|(handle, _)| {
+                    handle.and_then(|handle| handle.is_closed().then_some(Message::TryExit))
+                }),
             window::close_events().map(Message::Close),
+            ::iced::keyboard::listen().filter_map(|event| match event {
+                ::iced::keyboard::Event::KeyPressed { key, modifiers, .. } => match key.as_ref() {
+                    Key::Character("q") if modifiers == Modifiers::CTRL => Some(Message::TryExit),
+                    Key::Named(::iced::keyboard::key::Named::Tab)
+                        if modifiers == Modifiers::NONE =>
+                    {
+                        Some(Message::ToggleAll)
+                    }
+                    Key::Named(::iced::keyboard::key::Named::Tab)
+                        if modifiers == Modifiers::CTRL =>
+                    {
+                        Some(Message::CollapseAll)
+                    }
+                    Key::Named(::iced::keyboard::key::Named::Tab)
+                        if modifiers == Modifiers::SHIFT =>
+                    {
+                        Some(Message::UncollapseAll)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }),
         ])
     }
 
     /// Exit if not a daemon, and no windows are open.
     fn try_exit(&self) -> Task<Message> {
-        if self.subscriber_handle.is_closed() && self.windows.is_empty() {
-            ::iced::exit()
-        } else {
-            if !self.is_daemon && self.windows.is_empty() {
-                self.subscriber_handle.close();
+        if let Some(handle) = &self.subscriber_handle {
+            if handle.is_closed() && self.windows.is_empty() {
+                ::iced::exit()
+            } else {
+                if !self.is_daemon && self.windows.is_empty() {
+                    handle.close();
+                }
+                Task::none()
             }
-            Task::none()
+        } else {
+            ::iced::exit()
         }
     }
 
@@ -400,8 +504,10 @@ impl State {
                     WindowState {
                         window,
                         hovered: None,
+                        metadata: HashMap::new(),
                     },
                 );
+                self.last_focused = Some(id);
                 Task::none()
             }
             Message::SetWindow { id, window } => {
@@ -429,6 +535,10 @@ impl State {
                 }
 
                 self.try_exit()
+            }
+            Message::WindowFocused(id) => {
+                self.last_focused = Some(id);
+                Task::none()
             }
             Message::TryExit => self.try_exit(),
             Message::LineHover { id, idx } => {
@@ -586,12 +696,93 @@ impl State {
 
                 Task::none()
             }
+            Message::ToggleSection { id, section } => {
+                if let Some(window) = self.windows.get_mut(&id) {
+                    let meta = window.metadata.entry(section).or_default();
+                    meta.is_collapsed = !meta.is_collapsed;
+                }
+                Task::none()
+            }
+            Message::ToggleAll => {
+                if let Some(focused) = self.last_focused
+                    && let Some(WindowState {
+                        window, metadata, ..
+                    }) = self.windows.get_mut(&focused)
+                    && let Ok(content) = &window.content
+                {
+                    for title in content.iter().filter(|line| line.is_title()) {
+                        let entry = metadata
+                            .entry(
+                                title
+                                    .text()
+                                    .to_owned()
+                                    .pipe(Cow::<str>::Owned)
+                                    .pipe(Section::Title),
+                            )
+                            .or_default();
+
+                        entry.is_collapsed = !entry.is_collapsed;
+                    }
+                }
+                Task::none()
+            }
+            Message::CollapseAll => {
+                if let Some(focused) = self.last_focused
+                    && let Some(WindowState {
+                        window, metadata, ..
+                    }) = self.windows.get_mut(&focused)
+                    && let Ok(content) = &window.content
+                {
+                    for title in content.iter().filter(|line| line.is_title()) {
+                        let entry = metadata
+                            .entry(
+                                title
+                                    .text()
+                                    .to_owned()
+                                    .pipe(Cow::<str>::Owned)
+                                    .pipe(Section::Title),
+                            )
+                            .or_default();
+
+                        entry.is_collapsed = true;
+                    }
+                }
+                Task::none()
+            }
+            Message::UncollapseAll => {
+                if let Some(focused) = self.last_focused
+                    && let Some(WindowState {
+                        window, metadata, ..
+                    }) = self.windows.get_mut(&focused)
+                    && let Ok(content) = &window.content
+                {
+                    for title in content.iter().filter(|line| line.is_title()) {
+                        let entry = metadata
+                            .entry(
+                                title
+                                    .text()
+                                    .to_owned()
+                                    .pipe(Cow::<str>::Owned)
+                                    .pipe(Section::Title),
+                            )
+                            .or_default();
+
+                        entry.is_collapsed = false;
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
     /// View ui.
     pub fn view<'this>(&'this self, id: window::Id) -> impl Into<Element<'this, Message>> {
-        let Some(WindowState { window, hovered }) = self.windows.get(&id) else {
+        let Some(WindowState {
+            window,
+            hovered,
+            metadata,
+        }) = self.windows.get(&id)
+        else {
             return widget::container(widget::space().width(Fill).height(Fill));
         };
         let Window { content, .. } = window.as_ref();
@@ -624,49 +815,55 @@ impl State {
                 line_view
                     .iter()
                     .enumerate()
-                    .map(|(idx, line)| {
-                        if line.text().is_empty() {
-                            widget::space().height(5).pipe(Element::from)
-                        } else if line.is_title() {
-                            widget::text(line.text())
-                                .wrapping(widget::text::Wrapping::None)
-                                .size(16)
-                                .font(Font {
-                                    weight: font::Weight::ExtraBold,
-                                    ..Default::default()
-                                })
-                                .pipe(Element::from)
-                        } else if line.is_warning() {
-                            widget::text(line.text())
-                                .wrapping(widget::text::Wrapping::None)
-                                .style(widget::text::warning)
-                                .size(12)
-                                .pipe(Element::from)
-                        } else {
-                            if Some(idx) == *hovered {
-                                widget::text(line.text())
-                                    .wrapping(widget::text::Wrapping::None)
-                                    .size(12)
-                                    .font(Font {
-                                        weight: font::Weight::Bold,
-                                        ..Default::default()
-                                    })
-                            } else {
-                                widget::text(line.text())
-                                    .wrapping(widget::text::Wrapping::None)
-                                    .size(12)
+                    .filter_map({
+                        let mut is_collapsed = false;
+                        move |(idx, line)| {
+                            if line.is_title() {
+                                is_collapsed = metadata
+                                    .get(&Section::Title(Cow::Borrowed(line.text())))
+                                    .is_some_and(|meta| meta.is_collapsed);
+
+                                return Some(title(line.text(), is_collapsed, id));
                             }
-                            .pipe(widget::button)
-                            .on_press_maybe(
-                                (!line.text().is_empty())
-                                    .then_some(Message::ExecLine { id, line: idx }),
-                            )
-                            .padding(0)
-                            .style(widget::button::text)
-                            .pipe(widget::mouse_area)
-                            .on_enter(Message::LineHover { id, idx })
-                            .on_exit(Message::LineUnhover { id, idx })
-                            .pipe(Element::from)
+                            if is_collapsed {
+                                return None;
+                            }
+                            if line.text().is_empty() {
+                                widget::space().height(5).pipe(Element::from).pipe(Some)
+                            } else if line.is_warning() {
+                                widget::text(line.text())
+                                    .wrapping(widget::text::Wrapping::None)
+                                    .style(widget::text::warning)
+                                    .size(12)
+                                    .pipe(Element::from)
+                                    .pipe(Some)
+                            } else {
+                                if Some(idx) == *hovered {
+                                    widget::text(line.text())
+                                        .wrapping(widget::text::Wrapping::None)
+                                        .size(12)
+                                        .font(Font {
+                                            weight: font::Weight::Bold,
+                                            ..Default::default()
+                                        })
+                                } else {
+                                    widget::text(line.text())
+                                        .wrapping(widget::text::Wrapping::None)
+                                        .size(12)
+                                }
+                                .pipe(widget::button)
+                                .on_press_maybe(
+                                    (!line.text().is_empty())
+                                        .then_some(Message::ExecLine { id, line: idx }),
+                                )
+                                .padding(0)
+                                .style(widget::button::text)
+                                .pipe(widget::mouse_area)
+                                .on_enter(Message::LineHover { id, idx })
+                                .on_exit(Message::LineUnhover { id, idx })
+                                .pipe(Element::from)
+                                .pipe(Some)
+                            }
                         }
                     })
                     .fold(
