@@ -6,7 +6,7 @@ use ::std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use ::clap::ValueEnum;
@@ -29,6 +29,7 @@ use ::notify::{
     event::{CreateKind, ModifyKind},
     recommended_watcher,
 };
+use ::regex::RegexSet;
 use ::tap::Pipe;
 
 use crate::{
@@ -314,6 +315,19 @@ pub enum Message {
     CollapseAll,
     /// Open all sections.
     UncollapseAll,
+    /// Should filter be shown/used.
+    ToggleFilter,
+    /// Update content of filer.
+    UpdateFilter {
+        /// Window id of filter entry.
+        id: window::Id,
+        /// Content of filter.
+        content: String,
+    },
+    /// Give focus to next widget.
+    FocusNext,
+    /// Give focus to prev widget.
+    FocusPrev,
 }
 
 /// Window state.
@@ -354,6 +368,16 @@ struct WindowState {
     hovered: Option<usize>,
     /// Section Metadata.
     metadata: HashMap<Section<'static>, Metadata>,
+    /// Should filter be used.
+    use_filter: bool,
+    /// Contents of filter.
+    filter: String,
+    /// Last compiled filter regex.
+    filter_re: RegexSet,
+    /// Id of filter widget.
+    filter_id: widget::Id,
+    /// Id of outer window container.
+    container_id: widget::Id,
 }
 
 /// Wrap a [PathReadProvider] adding provided paths to set.
@@ -412,6 +436,28 @@ fn title(title: &str, is_collapsed: bool, id: window::Id) -> Element<'_, Message
         .pipe(Element::from)
 }
 
+/// Keyboard subscriptions.
+fn key_subscription() -> Subscription<Message> {
+    ::iced::keyboard::listen().filter_map(|event| match event {
+        ::iced::keyboard::Event::KeyPressed { key, modifiers, .. } => match key.as_ref() {
+            Key::Character("q") if modifiers == Modifiers::CTRL => Some(Message::TryExit),
+            Key::Named(::iced::keyboard::key::Named::Tab) if modifiers == Modifiers::NONE => {
+                Some(Message::FocusNext)
+            }
+            Key::Named(::iced::keyboard::key::Named::Tab) if modifiers == Modifiers::SHIFT => {
+                Some(Message::FocusPrev)
+            }
+            Key::Character("t") if modifiers == Modifiers::NONE => Some(Message::CollapseAll),
+            Key::Character("t") if modifiers == Modifiers::SHIFT => Some(Message::UncollapseAll),
+            Key::Character("+") if modifiers == Modifiers::NONE => Some(Message::UncollapseAll),
+            Key::Character("-") if modifiers == Modifiers::NONE => Some(Message::CollapseAll),
+            Key::Character("f") if modifiers == Modifiers::NONE => Some(Message::ToggleFilter),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 /// Ui state.
 #[derive(Debug, Default)]
 struct State {
@@ -454,28 +500,7 @@ impl State {
                     handle.and_then(|handle| handle.is_closed().then_some(Message::TryExit))
                 }),
             window::close_events().map(Message::Close),
-            ::iced::keyboard::listen().filter_map(|event| match event {
-                ::iced::keyboard::Event::KeyPressed { key, modifiers, .. } => match key.as_ref() {
-                    Key::Character("q") if modifiers == Modifiers::CTRL => Some(Message::TryExit),
-                    Key::Named(::iced::keyboard::key::Named::Tab)
-                        if modifiers == Modifiers::NONE =>
-                    {
-                        Some(Message::ToggleAll)
-                    }
-                    Key::Named(::iced::keyboard::key::Named::Tab)
-                        if modifiers == Modifiers::CTRL =>
-                    {
-                        Some(Message::CollapseAll)
-                    }
-                    Key::Named(::iced::keyboard::key::Named::Tab)
-                        if modifiers == Modifiers::SHIFT =>
-                    {
-                        Some(Message::UncollapseAll)
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }),
+            key_subscription(),
         ])
     }
 
@@ -497,6 +522,8 @@ impl State {
 
     /// Update ui state.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        static RE_ALL: LazyLock<RegexSet> =
+            LazyLock::new(|| RegexSet::new([""]).expect("regex should compile"));
         match message {
             Message::AddWindow { id, window } => {
                 self.windows.insert(
@@ -505,6 +532,11 @@ impl State {
                         window,
                         hovered: None,
                         metadata: HashMap::new(),
+                        use_filter: false,
+                        filter: String::new(),
+                        filter_re: RE_ALL.clone(),
+                        filter_id: widget::Id::unique(),
+                        container_id: widget::Id::unique(),
                     },
                 );
                 self.last_focused = Some(id);
@@ -772,6 +804,44 @@ impl State {
                 }
                 Task::none()
             }
+            Message::ToggleFilter => {
+                if let Some(focused) = self.last_focused
+                    && let Some(WindowState {
+                        use_filter,
+                        filter_id,
+                        container_id,
+                        ..
+                    }) = self.windows.get_mut(&focused)
+                {
+                    *use_filter = !*use_filter;
+
+                    widget::operation::focus(if *use_filter {
+                        filter_id.clone()
+                    } else {
+                        container_id.clone()
+                    })
+                } else {
+                    Task::none()
+                }
+            }
+            Message::UpdateFilter { id, content } => {
+                if let Some(WindowState {
+                    filter, filter_re, ..
+                }) = self.windows.get_mut(&id)
+                {
+                    if content.is_empty() {
+                        *filter_re = RE_ALL.clone();
+                    } else if let Ok(words) = ::shell_words::split(&content)
+                        && let Ok(new_re) = RegexSet::new(words)
+                    {
+                        *filter_re = new_re;
+                    }
+                    *filter = content;
+                }
+                Task::none()
+            }
+            Message::FocusNext => widget::operation::focus_next(),
+            Message::FocusPrev => widget::operation::focus_previous(),
         }
     }
 
@@ -781,6 +851,12 @@ impl State {
             window,
             hovered,
             metadata,
+            use_filter,
+            filter_re,
+            filter,
+            container_id,
+            filter_id,
+            ..
         }) = self.windows.get(&id)
         else {
             return widget::container(widget::space().width(Fill).height(Fill));
@@ -811,6 +887,18 @@ impl State {
                     })
                     .size(18),
             )
+            .pipe(|col| {
+                if *use_filter {
+                    col.push(
+                        widget::text_input("Filter...", filter)
+                            .id(filter_id.clone())
+                            .padding(3)
+                            .on_input(move |content| Message::UpdateFilter { id, content }),
+                    )
+                } else {
+                    col
+                }
+            })
             .push(
                 line_view
                     .iter()
@@ -828,6 +916,11 @@ impl State {
                             if is_collapsed {
                                 return None;
                             }
+
+                            if *use_filter && !filter_re.matches(line.text()).matched_all() {
+                                return None;
+                            }
+
                             if line.text().is_empty() {
                                 widget::space().height(5).pipe(Element::from).pipe(Some)
                             } else if line.is_warning() {
@@ -883,6 +976,7 @@ impl State {
                     .style(widget::container::bordered_box),
             )
             .pipe(widget::container)
+            .id(container_id.clone())
             .padding(5)
     }
 }
