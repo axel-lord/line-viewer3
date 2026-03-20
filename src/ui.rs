@@ -328,6 +328,8 @@ pub enum Message {
     FocusNext,
     /// Give focus to prev widget.
     FocusPrev,
+    /// Disengage in focused window. (hide search)
+    Disengage,
 }
 
 /// Window state.
@@ -440,13 +442,14 @@ fn title(title: &str, is_collapsed: bool, id: window::Id) -> Element<'_, Message
 fn key_subscription() -> Subscription<Message> {
     ::iced::keyboard::listen().filter_map(|event| match event {
         ::iced::keyboard::Event::KeyPressed { key, modifiers, .. } => match key.as_ref() {
-            Key::Character("q") if modifiers == Modifiers::CTRL => Some(Message::TryExit),
             Key::Named(::iced::keyboard::key::Named::Tab) if modifiers == Modifiers::NONE => {
                 Some(Message::FocusNext)
             }
             Key::Named(::iced::keyboard::key::Named::Tab) if modifiers == Modifiers::SHIFT => {
                 Some(Message::FocusPrev)
             }
+            Key::Named(::iced::keyboard::key::Named::Escape) => Some(Message::Disengage),
+            Key::Character("q") if modifiers == Modifiers::CTRL => Some(Message::TryExit),
             Key::Character("t") if modifiers == Modifiers::NONE => Some(Message::CollapseAll),
             Key::Character("t") if modifiers == Modifiers::SHIFT => Some(Message::UncollapseAll),
             Key::Character("+") if modifiers == Modifiers::NONE => Some(Message::UncollapseAll),
@@ -820,6 +823,20 @@ impl State {
                     } else {
                         container_id.clone()
                     })
+                } else {
+                    Task::none()
+                }
+            }
+            Message::Disengage => {
+                if let Some(focused) = self.last_focused
+                    && let Some(WindowState {
+                        use_filter,
+                        container_id,
+                        ..
+                    }) = self.windows.get_mut(&focused)
+                {
+                    *use_filter = false;
+                    widget::operation::focus(container_id.clone())
                 } else {
                     Task::none()
                 }
