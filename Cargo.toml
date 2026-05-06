@@ -57,6 +57,7 @@ katalog-lib-ipc = { git = "https://github.com/axel-lord/katalog-lib" }
 log = "0.4.29"
 mimalloc = "0.1.48"
 notify = { version = "8.2.0", features = ["flume"] }
+open = "5.3.4"
 patharg = "0.4.1"
 regex = "1.12.3"
 rfd = { version = "0.16.0", default-features = false, features = ["gtk3"]}

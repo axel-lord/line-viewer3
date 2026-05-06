@@ -463,6 +463,14 @@ fn key_subscription() -> Subscription<Message> {
     })
 }
 
+/// Subscribe to window events.
+fn window_subscription() -> Subscription<Message> {
+    ::iced::window::events().filter_map(|(id, event)| match event {
+        window::Event::Focused => Some(Message::WindowFocused(id)),
+        _ => None,
+    })
+}
+
 /// Ui state.
 #[derive(Debug, Default)]
 struct State {
@@ -505,6 +513,7 @@ impl State {
                     handle.and_then(|handle| handle.is_closed().then_some(Message::TryExit))
                 }),
             window::close_events().map(Message::Close),
+            window_subscription(),
             key_subscription(),
         ])
     }
