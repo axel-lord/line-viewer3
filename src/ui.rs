@@ -341,6 +341,8 @@ pub struct Window {
     title: String,
     /// Window home.
     home: Option<PathBuf>,
+    /// Path of root file of line view.
+    path: Arc<str>,
     /// Lines.
     content: Result<LineView, String>,
 }
@@ -625,13 +627,15 @@ impl State {
                     let provider = PathReadProviderWrapper::default();
                     let title = format!("Line Viewer: {file}");
                     let theme = theme.into_inner();
+                    let file = Arc::from(file);
                     let content =
-                        LineView::read_path(file.into(), provider.clone(), home.as_deref())
+                        LineView::read_path(Arc::clone(&file), provider.clone(), home.as_deref())
                             .map_err(|err| err.to_string());
 
                     (
                         Arc::new(Window {
                             title,
+                            path: file,
                             home,
                             theme,
                             content,
@@ -657,10 +661,6 @@ impl State {
                 EventKind::Create(CreateKind::File) | EventKind::Modify(ModifyKind::Data(..)) => {
                     let mut tasks = Vec::new();
                     for path in event.paths {
-                        let Some(file) = path.to_str() else {
-                            ::log::error!("path {path:?} is not valid utf-8");
-                            continue;
-                        };
                         let Some(id_set) = self.watched.get(&path) else {
                             if let Some(watcher) = &mut self.watcher
                                 && let Err(err) = watcher.unwatch(&path)
@@ -673,7 +673,7 @@ impl State {
                             let Some(window) = self.windows.get(id) else {
                                 continue;
                             };
-                            let file = file.to_owned();
+                            let file = Arc::clone(&window.path);
                             let theme = window.theme.clone();
                             let home = window.home.clone();
                             let id = *id;
@@ -683,7 +683,7 @@ impl State {
                                     let provider = PathReadProviderWrapper::default();
                                     let theme = theme;
                                     let content = LineView::read_path(
-                                        file.into(),
+                                        Arc::clone(&file),
                                         provider.clone(),
                                         home.as_deref(),
                                     )
@@ -693,6 +693,7 @@ impl State {
                                         id,
                                         Arc::new(Window {
                                             title,
+                                            path: file,
                                             home,
                                             theme,
                                             content,
