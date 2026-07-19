@@ -41,28 +41,28 @@ todo = "warn"
 unused_result_ok = "warn"
 
 [dependencies]
-bon = "3.8.2"
-clap = { version = "4.5.53", features = ["derive"] }
-clap_complete = "4.5.61"
+bon = "3.9.3"
+clap = { version = "4.6.2", features = ["derive"] }
+clap_complete = "4.6.7"
 color-eyre = "0.6.5"
 derive_more = { version = "2.1.1", features = ["deref", "deref_mut", "from", "into"] }
-either = "1.15.0"
-env_logger = "0.11.8"
+either = "1.16.0"
+env_logger = "0.11.11"
 flume = { version = "0.12.0", features = ["async"] }
-futures = "0.3.31"
-hashbrown = "0.16.1"
+futures = "0.3.33"
+hashbrown = "0.17.1"
 iced = { version = "0.14.0", default-features = false, features = ["crisp", "smol"] }
 katalog-lib = { git = "https://github.com/axel-lord/katalog-lib" }
 katalog-lib-ipc = { git = "https://github.com/axel-lord/katalog-lib" }
-log = "0.4.29"
-mimalloc = "0.1.48"
+log = { version = "0.4.33", features = ["max_level_info", "release_max_level_warn"] }
+mimalloc = "0.1.52"
 notify = { version = "8.2.0", features = ["flume"] }
-open = "5.3.4"
+open = "5.4.0"
 patharg = "0.4.1"
-regex = "1.12.3"
-rfd = { version = "0.16.0", default-features = false, features = ["gtk3"]}
-rustc-hash = "2.1.1"
+regex = "1.13.1"
+rfd = { version = "0.17.2", default-features = false, features = ["gtk3"]}
+rustc-hash = "2.1.3"
 shell-words = "1.1.1"
 smol = "2.0.2"
 tap = "1.0.1"
-thiserror = "2.0.17"
+thiserror = "2.0.19"

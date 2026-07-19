@@ -24,11 +24,7 @@ use ::iced::{
 };
 use ::katalog_lib::ThemeValueEnum;
 use ::katalog_lib_ipc::{StaticPath, ZeroCopySend, single_process::SubscriberHandle};
-use ::notify::{
-    EventKind, RecommendedWatcher, Watcher,
-    event::{CreateKind, ModifyKind},
-    recommended_watcher,
-};
+use ::notify::{EventKind, RecommendedWatcher, Watcher, event::CreateKind, recommended_watcher};
 use ::regex::RegexSet;
 use ::tap::Pipe;
 
@@ -330,6 +326,8 @@ pub enum Message {
     FocusPrev,
     /// Disengage in focused window. (hide search)
     Disengage,
+    /// Edit content of focused window.
+    Edit,
 }
 
 /// Window state.
@@ -402,7 +400,9 @@ impl provide::Read for PathReadProviderWrapper {
     fn provide(&self, from: &str) -> line_view::Result<Self::BufRead> {
         let Self(provider, path_set) = self;
         let reader = provider.provide(from)?;
-        path_set.borrow_mut().insert(PathBuf::from(from));
+        let path = PathBuf::from(from);
+        ::log::info!("adding {path:?} to path set");
+        path_set.borrow_mut().insert(path);
         Ok(reader)
     }
 }
@@ -457,6 +457,7 @@ fn key_subscription() -> Subscription<Message> {
             Key::Character("+") if modifiers == Modifiers::NONE => Some(Message::UncollapseAll),
             Key::Character("-") if modifiers == Modifiers::NONE => Some(Message::CollapseAll),
             Key::Character("f") if modifiers == Modifiers::NONE => Some(Message::ToggleFilter),
+            Key::Character("e") if modifiers == Modifiers::NONE => Some(Message::Edit),
             _ => None,
         },
         _ => None,
@@ -534,6 +535,32 @@ impl State {
         }
     }
 
+    /// Run given functor with focused window state, if any window is focused.
+    pub fn with_focused<F>(&mut self, f: F) -> Task<Message>
+    where
+        F: for<'a> FnOnce(&'a mut WindowState) -> Task<Message>,
+    {
+        if let Some(focused) = self.last_focused
+            && let Some(state) = self.windows.get_mut(&focused)
+        {
+            f(state)
+        } else {
+            Task::none()
+        }
+    }
+
+    /// Run given functor with window of given id if available.
+    pub fn with_window<F>(&mut self, id: window::Id, f: F) -> Task<Message>
+    where
+        F: for<'a> FnOnce(&'a mut WindowState) -> Task<Message>,
+    {
+        if let Some(state) = self.windows.get_mut(&id) {
+            f(state)
+        } else {
+            Task::none()
+        }
+    }
+
     /// Update ui state.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         static RE_ALL: LazyLock<RegexSet> =
@@ -587,20 +614,16 @@ impl State {
                 Task::none()
             }
             Message::TryExit => self.try_exit(),
-            Message::LineHover { id, idx } => {
-                if let Some(window) = self.windows.get_mut(&id) {
-                    window.hovered = Some(idx);
-                }
+            Message::LineHover { id, idx } => self.with_window(id, |window| {
+                window.hovered = Some(idx);
                 Task::none()
-            }
-            Message::LineUnhover { id, idx } => {
-                if let Some(window) = self.windows.get_mut(&id)
-                    && window.hovered == Some(idx)
-                {
+            }),
+            Message::LineUnhover { id, idx } => self.with_window(id, |window| {
+                if window.hovered == Some(idx) {
                     window.hovered = None;
                 }
                 Task::none()
-            }
+            }),
             Message::ExecLine { id, line } => self
                 .windows
                 .get(&id)
@@ -667,7 +690,9 @@ impl State {
                 })
             }
             Message::Watcher(event) => match event.kind {
-                EventKind::Create(CreateKind::File) | EventKind::Modify(ModifyKind::Data(..)) => {
+                EventKind::Create(CreateKind::File) | EventKind::Modify(..) => {
+                    ::log::info!("watcher event received");
+
                     let mut tasks = Vec::new();
                     for path in event.paths {
                         let Some(id_set) = self.watched.get(&path) else {
@@ -676,6 +701,7 @@ impl State {
                             {
                                 ::log::warn!("could not unwatch {path:?}\n{err}");
                             };
+                            ::log::info!("unwatched {path:?}");
                             continue;
                         };
                         for id in id_set {
@@ -687,40 +713,42 @@ impl State {
                             let home = window.home.clone();
                             let id = *id;
                             tasks.push(
-                                Task::future(::smol::unblock(move || {
-                                    let title = format!("Line Viewer: {file}");
-                                    let provider = PathReadProviderWrapper::default();
-                                    let theme = theme;
-                                    let content = LineView::read_path(
-                                        Arc::clone(&file),
-                                        provider.clone(),
-                                        home.as_deref(),
-                                    )
-                                    .map_err(|err| err.to_string());
-
-                                    (
-                                        id,
-                                        Arc::new(Window {
-                                            title,
-                                            path: file,
-                                            home,
-                                            theme,
-                                            content,
-                                        }),
-                                        provider.get_set(),
-                                    )
-                                }))
-                                .then(
-                                    |(id, window, path_set)| {
-                                        Task::done(Message::SetWindow { id, window }).chain(
-                                            Task::batch(
-                                                path_set.into_iter().map(|path| {
-                                                    Task::done(Message::Watch(path, id))
-                                                }),
-                                            ),
+                                Task::future(async move {
+                                    ::smol::Timer::after(Duration::from_millis(20)).await;
+                                    ::smol::unblock(move || {
+                                        let title = format!("Line Viewer: {file}");
+                                        let provider = PathReadProviderWrapper::default();
+                                        let theme = theme;
+                                        let content = LineView::read_path(
+                                            Arc::clone(&file),
+                                            provider.clone(),
+                                            home.as_deref(),
                                         )
-                                    },
-                                ),
+                                        .map_err(|err| err.to_string());
+
+                                        (
+                                            id,
+                                            Arc::new(Window {
+                                                title,
+                                                path: file,
+                                                home,
+                                                theme,
+                                                content,
+                                            }),
+                                            provider.get_set(),
+                                        )
+                                    })
+                                    .await
+                                })
+                                .then(|(id, window, path_set)| {
+                                    Task::done(Message::SetWindow { id, window }).chain(
+                                        Task::batch(
+                                            path_set
+                                                .into_iter()
+                                                .map(|path| Task::done(Message::Watch(path, id))),
+                                        ),
+                                    )
+                                }),
                             );
                         }
                     }
@@ -729,32 +757,50 @@ impl State {
                 _ => Task::none(),
             },
             Message::Watch(path, id) => {
-                if let Some(id_set) = self.watched.get_mut(&path) {
-                    id_set.insert(id);
-                } else if let Some(watcher) = &mut self.watcher {
+                if let Some(watcher) = &mut self.watcher {
+                    if let Err(err) = watcher.unwatch(&path) {
+                        match err.kind {
+                            ::notify::ErrorKind::WatchNotFound => {}
+                            err => {
+                                ::log::error!("could not unwatch {path:?}\n{err:#?}");
+                            }
+                        }
+                    } else {
+                        ::log::info!("rewatching {path:?}");
+                    }
+
                     if let Err(err) = watcher.watch(&path, ::notify::RecursiveMode::NonRecursive) {
                         ::log::error!("could not watch {path:?}\n{err}");
+                        self.watched.remove(&path);
                     } else {
-                        self.watched.insert(path, BTreeSet::from_iter([id]));
-                    };
+                        ::log::info!("watching {path:?}");
+                        self.watched
+                            .entry(path)
+                            .or_insert_with_key(|path| {
+                                ::log::info!("creating new watched set for {path:?}");
+                                BTreeSet::new()
+                            })
+                            .insert(id);
+                    }
+                } else {
+                    ::log::warn!("{path:?} not added to any watch context");
                 }
 
                 Task::none()
             }
-            Message::ToggleSection { id, section } => {
-                if let Some(window) = self.windows.get_mut(&id) {
-                    let meta = window.metadata.entry(section).or_default();
-                    meta.is_collapsed = !meta.is_collapsed;
-                }
+            Message::ToggleSection { id, section } => self.with_window(id, |window| {
+                let meta = window.metadata.entry(section).or_default();
+                meta.is_collapsed = !meta.is_collapsed;
                 Task::none()
-            }
-            Message::ToggleAll => {
-                if let Some(focused) = self.last_focused
-                    && let Some(WindowState {
-                        window, metadata, ..
-                    }) = self.windows.get_mut(&focused)
-                    && let Ok(content) = &window.content
-                {
+            }),
+            Message::ToggleAll => self.with_focused(
+                |WindowState {
+                     window, metadata, ..
+                 }| {
+                    let Ok(content) = &window.content else {
+                        return Task::none();
+                    };
+
                     for title in content.iter().filter(|line| line.is_title()) {
                         let entry = metadata
                             .entry(
@@ -768,16 +814,18 @@ impl State {
 
                         entry.is_collapsed = !entry.is_collapsed;
                     }
-                }
-                Task::none()
-            }
-            Message::CollapseAll => {
-                if let Some(focused) = self.last_focused
-                    && let Some(WindowState {
-                        window, metadata, ..
-                    }) = self.windows.get_mut(&focused)
-                    && let Ok(content) = &window.content
-                {
+
+                    Task::none()
+                },
+            ),
+            Message::CollapseAll => self.with_focused(
+                |WindowState {
+                     window, metadata, ..
+                 }| {
+                    let Ok(content) = &window.content else {
+                        return Task::none();
+                    };
+
                     for title in content.iter().filter(|line| line.is_title()) {
                         let entry = metadata
                             .entry(
@@ -791,16 +839,17 @@ impl State {
 
                         entry.is_collapsed = true;
                     }
-                }
-                Task::none()
-            }
-            Message::UncollapseAll => {
-                if let Some(focused) = self.last_focused
-                    && let Some(WindowState {
-                        window, metadata, ..
-                    }) = self.windows.get_mut(&focused)
-                    && let Ok(content) = &window.content
-                {
+                    Task::none()
+                },
+            ),
+            Message::UncollapseAll => self.with_focused(
+                |WindowState {
+                     window, metadata, ..
+                 }| {
+                    let Ok(content) = &window.content else {
+                        return Task::none();
+                    };
+
                     for title in content.iter().filter(|line| line.is_title()) {
                         let entry = metadata
                             .entry(
@@ -814,18 +863,16 @@ impl State {
 
                         entry.is_collapsed = false;
                     }
-                }
-                Task::none()
-            }
-            Message::ToggleFilter => {
-                if let Some(focused) = self.last_focused
-                    && let Some(WindowState {
-                        use_filter,
-                        filter_id,
-                        container_id,
-                        ..
-                    }) = self.windows.get_mut(&focused)
-                {
+                    Task::none()
+                },
+            ),
+            Message::ToggleFilter => self.with_focused(
+                |WindowState {
+                     use_filter,
+                     filter_id,
+                     container_id,
+                     ..
+                 }| {
                     *use_filter = !*use_filter;
 
                     widget::operation::focus(if *use_filter {
@@ -833,29 +880,23 @@ impl State {
                     } else {
                         container_id.clone()
                     })
-                } else {
-                    Task::none()
-                }
-            }
-            Message::Disengage => {
-                if let Some(focused) = self.last_focused
-                    && let Some(WindowState {
-                        use_filter,
-                        container_id,
-                        ..
-                    }) = self.windows.get_mut(&focused)
-                {
+                },
+            ),
+            Message::Disengage => self.with_focused(
+                |WindowState {
+                     use_filter,
+                     container_id,
+                     ..
+                 }| {
                     *use_filter = false;
                     widget::operation::focus(container_id.clone())
-                } else {
-                    Task::none()
-                }
-            }
-            Message::UpdateFilter { id, content } => {
-                if let Some(WindowState {
-                    filter, filter_re, ..
-                }) = self.windows.get_mut(&id)
-                {
+                },
+            ),
+            Message::UpdateFilter { id, content } => self.with_window(
+                id,
+                |WindowState {
+                     filter, filter_re, ..
+                 }| {
                     if content.is_empty() {
                         *filter_re = RE_ALL.clone();
                     } else if let Ok(words) = ::shell_words::split(&content)
@@ -864,9 +905,16 @@ impl State {
                         *filter_re = new_re;
                     }
                     *filter = content;
-                }
+
+                    Task::none()
+                },
+            ),
+            Message::Edit => self.with_focused(|window| {
+                if let Err(err) = ::open::that_detached(&*window.path) {
+                    ::log::error!("could not open {}, {err}", window.path);
+                };
                 Task::none()
-            }
+            }),
             Message::FocusNext => widget::operation::focus_next(),
             Message::FocusPrev => widget::operation::focus_previous(),
         }
